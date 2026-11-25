@@ -1,0 +1,6 @@
+{
+  "name": "本地对战游戏厅 · 坦克大战",
+  "description": "面向桌面浏览器的本地双人同屏对战平台，首款接入《坦克大战》迷宫竞技游戏，支持自定义改键、规则预设与地图复玩。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
