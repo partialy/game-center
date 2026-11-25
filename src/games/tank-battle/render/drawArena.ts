@@ -84,7 +84,7 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
     this.updateParticles(realDtSeconds);
 
     const { maze } = world;
-    const padding = 20;
+    const padding = Math.min(this.cssWidth, this.cssHeight) < 520 ? 12 : 20;
     const availW = Math.max(100, this.cssWidth - padding * 2);
     const availH = Math.max(100, this.cssHeight - padding * 2);
     const scale = Math.min(availW / maze.width, availH / maze.height);

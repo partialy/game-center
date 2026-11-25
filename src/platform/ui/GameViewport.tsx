@@ -8,6 +8,7 @@ import {
   Home,
   Maximize2,
   Minimize2,
+  Move,
   Pause,
   Play,
   SlidersHorizontal,
@@ -31,6 +32,7 @@ import { SessionHost } from '../session/sessionHost';
 import { PerfMetricsCollector, type PerfSnapshot } from '../debug/perfMonitor';
 import { useMobileViewport } from '../mobile/MobileViewportContext';
 import { DevPerfOverlay } from './DevPerfOverlay';
+import { MobileArenaHud } from './MobileArenaHud';
 import { VirtualControls } from './VirtualControls';
 import { ITEM_ACCENT_COLORS, TankItemIcon } from '../../games/tank-battle/ui/itemIcons';
 import type { ItemKind } from '../../games/tank-battle/types';
@@ -73,14 +75,16 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
   const perfCollectorRef = useRef<PerfMetricsCollector>(new PerfMetricsCollector());
   const {
     isMobileOrTablet,
-    logicalHeight,
     virtualControlsOpacity,
     setVirtualControlsOpacity,
+    fireButtonPos,
+    setFireButtonPos,
     isFullscreen,
     canRequestFullscreen,
     requestLandscapeFullscreen,
     exitFullscreen,
   } = useMobileViewport();
+  const [editingFireLayout, setEditingFireLayout] = useState(false);
 
   const onMatchFinishedRef = useRef(onMatchFinished);
   onMatchFinishedRef.current = onMatchFinished;
@@ -235,14 +239,23 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
       ? (snapshot.rules as Record<string, unknown>).controlMode
       : undefined;
 
-  const isCompactMobile = isMobileOrTablet && logicalHeight <= 540;
   const primaryHumanConfig = humanArenaConfigs[0];
   const primaryHumanHud = primaryHumanConfig
     ? hud?.players.find((p) => p.slotId === primaryHumanConfig.slotId)
     : undefined;
   const primaryActiveItemKind =
     primaryHumanHud?.statusItems.find((item) => item.tone !== 'shield')?.iconKey ?? null;
-  const showVirtualControls = isMobileOrTablet && Boolean(primaryHumanConfig) && !paused && !settingsOverlayOpen;
+  const showVirtualControls =
+    isMobileOrTablet &&
+    Boolean(primaryHumanConfig) &&
+    !settingsOverlayOpen &&
+    (!paused || editingFireLayout);
+
+  useEffect(() => {
+    if (!paused || settingsOverlayOpen) {
+      setEditingFireLayout(false);
+    }
+  }, [paused, settingsOverlayOpen]);
 
   const handleToggleFullscreen = () => {
     if (isFullscreen) {
@@ -258,12 +271,9 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
         settingsOverlayOpen ? 'hidden' : ''
       }`}
     >
-      {/* 顶部外围状态栏：2 人模式保持经典双栏，3～8 席切换紧凑竞技场计分矩阵（绝不遮挡迷宫） */}
-      <div
-        className={`shrink-0 bg-[#FAF8F4] border-b border-[#CFC8B9] ${
-          isCompactMobile ? 'px-2.5 py-1' : 'px-4 py-2'
-        }`}
-      >
+      {/* 桌面端保留完整顶部外围状态栏；手机/Pad 端完全隐藏顶部栏、让游戏画面铺满全屏 */}
+      {!isMobileOrTablet && (
+        <div className="shrink-0 bg-[#FAF8F4] border-b border-[#CFC8B9] px-4 py-2">
         {isMultiSeatArena ? (
           <div
             data-testid="arena-scoreboard-matrix"
@@ -473,7 +483,7 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
             </div>
           </div>
         ) : (
-          <div className={`max-w-[1440px] mx-auto grid grid-cols-12 items-center ${isCompactMobile ? 'gap-1.5' : 'gap-3'}`}>
+          <div className="max-w-[1440px] mx-auto grid grid-cols-12 items-center gap-3">
             {/* P1 状态栏 */}
             <div className="col-span-5 min-w-0">
               {p1 && (
@@ -481,7 +491,6 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                   player={p1}
                   config={p1Config}
                   align="left"
-                  compact={isCompactMobile}
                 />
               )}
             </div>
@@ -595,13 +604,13 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                 player={p2}
                 config={p2Config}
                 align="right"
-                compact={isCompactMobile}
               />
             )}
           </div>
         </div>
         )}
-      </div>
+        </div>
+      )}
 
       {/* 中央完整迷宫画布容器 */}
       <div className="relative flex-1 min-h-0 w-full">
@@ -676,14 +685,40 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
           ) : null
         )}
 
-        {/* 移动端单人虚拟摇杆与发射大按钮 */}
+        {/* 移动端边缘悬浮 HUD（顶部居中时间/工具+比分，最边缘弹药道具，左下回合，右下地图ID） */}
+        {isMobileOrTablet && (
+          <MobileArenaHud
+            hud={hud}
+            snapshot={snapshot as MatchLaunchSnapshot<unknown>}
+            botStatuses={botStatuses}
+            isMultiSeatArena={isMultiSeatArena}
+            isAiSpectate={isAiSpectate}
+            paused={paused}
+            muted={muted}
+            copiedCode={copiedCode}
+            isFullscreen={isFullscreen}
+            canRequestFullscreen={canRequestFullscreen}
+            editingLayout={editingFireLayout}
+            onToggleMute={handleToggleMute}
+            onToggleFullscreen={handleToggleFullscreen}
+            onTogglePause={handleTogglePause}
+            onCopyMapCode={handleCopyMapCode}
+          />
+        )}
+
+        {/* 移动端单人虚拟摇杆与可调位置开火大按钮 */}
         {showVirtualControls && (
           <VirtualControls
             playerColorHex={primaryHumanConfig?.colorHex}
             activeItemKind={primaryActiveItemKind}
             opacityPercent={virtualControlsOpacity}
+            fireButtonPos={fireButtonPos}
+            editingLayout={editingFireLayout}
             onMoveStickChange={(x, y, mag) => hostRef.current?.setVirtualMoveStick(x, y, mag)}
             onFireChange={(pressed) => hostRef.current?.setVirtualFirePressed(pressed)}
+            onFireButtonPosChange={setFireButtonPos}
+            onResetFireButtonPos={() => setFireButtonPos(null)}
+            onDoneEditingLayout={() => setEditingFireLayout(false)}
           />
         )}
 
@@ -723,8 +758,8 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
           </div>
         )}
 
-        {/* 暂停模态框（无 backdrop-blur，支持移动端横屏滚动与虚拟按键透明度微调） */}
-        {paused && (
+        {/* 暂停模态框（无 backdrop-blur，支持移动端横屏滚动与虚拟按键透明度/位置调节） */}
+        {paused && !editingFireLayout && (
           <div
             role="dialog"
             aria-modal="true"
@@ -763,7 +798,7 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
               )}
 
               {isMobileOrTablet && !isAiSpectate && (
-                <div className="px-3 py-2.5 bg-[#F2EFE8] border border-[#DED8CA] rounded-lg space-y-1.5">
+                <div className="px-3 py-2.5 bg-[#F2EFE8] border border-[#DED8CA] rounded-lg space-y-2">
                   <div className="flex items-center justify-between text-xs font-semibold text-[#2B323A]">
                     <span>虚拟按键透明度</span>
                     <span className="font-mono-num text-[#D9432B]">{virtualControlsOpacity}%</span>
@@ -778,6 +813,14 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     aria-label="虚拟按键透明度"
                     className="w-full accent-[#D9432B] cursor-pointer"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setEditingFireLayout(true)}
+                    className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#1C2127] bg-white hover:bg-[#FAF8F4] border border-[#D4CEC0] rounded-md transition-colors cursor-pointer"
+                  >
+                    <Move className="w-3.5 h-3.5 text-[#D9432B]" aria-hidden="true" />
+                    拖动调整开火按钮位置
+                  </button>
                 </div>
               )}
 

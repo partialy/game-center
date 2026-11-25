@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Crosshair } from 'lucide-react';
+import { Check, Crosshair, Move, RotateCcw } from 'lucide-react';
 import type { ItemKind } from '../../games/tank-battle/types';
 import { ITEM_ACCENT_COLORS, TankItemIcon } from '../../games/tank-battle/ui/itemIcons';
 import { useMobileViewport } from '../mobile/MobileViewportContext';
+import { clampFireButtonPosition, type FireButtonPosition } from '../settings/preferencesStore';
 
 interface VirtualControlsProps {
   /** 主操控玩家涂装色 */
@@ -11,10 +12,20 @@ interface VirtualControlsProps {
   activeItemKind?: string | null;
   /** 控件整体透明度百分比（10 ~ 80） */
   opacityPercent: number;
+  /** 自定义开火按钮归一化坐标；为 null 时停靠默认右下角 */
+  fireButtonPos: FireButtonPosition | null;
+  /** 是否处于拖动调整开火按钮位置的编辑态 */
+  editingLayout?: boolean;
   /** 摇杆输出归一化方向与有效推幅（0..1） */
   onMoveStickChange: (x: number, y: number, magnitude: number) => void;
   /** 开火按键按下/抬起回调 */
   onFireChange: (pressed: boolean) => void;
+  /** 拖动更新开火按钮位置 */
+  onFireButtonPosChange?: (pos: FireButtonPosition) => void;
+  /** 重置开火按钮回默认位置 */
+  onResetFireButtonPos?: () => void;
+  /** 完成编辑并保存退出 */
+  onDoneEditingLayout?: () => void;
 }
 
 interface StickVisualState {
@@ -31,16 +42,21 @@ const DEADZONE_RATIO = 0.14;
 
 /**
  * 移动端战斗悬浮操控层：
- * - 左侧大区：浮动底座 360° 摇杆（落指即生中心、内环死区、边缘满速、手指拖拽方向引导弧）
- * - 右下角：独立大尺寸开火按钮（支持点按瞬发与按住连发，自动展示当前武器徽章）
- * - 严密隔离多指 pointerId，左手连续走位与右手开火完全互不干扰
+ * - 左侧大区：浮动底座 360° 摇杆（落指即生中心、内环死区、边缘满速、方向高亮刻度）
+ * - 右侧独立发射按钮：支持按住连发，并支持在“编辑布局”模式下单指自由拖拽调位与持久化
+ * - 多指 pointerId 严格隔离，左侧走位、右侧开火与界面拖动互不干扰
  */
 export function VirtualControls({
   playerColorHex = '#D9432B',
   activeItemKind = null,
   opacityPercent,
+  fireButtonPos,
+  editingLayout = false,
   onMoveStickChange,
   onFireChange,
+  onFireButtonPosChange,
+  onResetFireButtonPos,
+  onDoneEditingLayout,
 }: VirtualControlsProps) {
   const { isPortraitRotated, physicalWidth, logicalHeight, toLogicalPoint } =
     useMobileViewport();
@@ -49,12 +65,14 @@ export function VirtualControls({
   const outerRadius = isUltraCompact ? 48 : 56;
   const knobRadius = isUltraCompact ? 20 : 23;
   const maxTravel = outerRadius - knobRadius * 0.35;
-  const fireSize = isUltraCompact ? 74 : 84;
+  const fireSize = isUltraCompact ? 72 : 82;
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const zoneRef = useRef<HTMLDivElement | null>(null);
   const stickPointerIdRef = useRef<number | null>(null);
   const stickCenterRef = useRef<{ x: number; y: number }>({ x: 86, y: 120 });
   const firePointerIdRef = useRef<number | null>(null);
+  const dragPointerIdRef = useRef<number | null>(null);
 
   const [stickVisual, setStickVisual] = useState<StickVisualState>({
     active: false,
@@ -79,9 +97,22 @@ export function VirtualControls({
     };
   }, []);
 
-  const getLogicalZoneBox = (): { left: number; top: number; width: number; height: number } => {
-    const el = zoneRef.current;
-    if (!el) return { left: 0, top: 0, width: 320, height: 280 };
+  useEffect(() => {
+    if (editingLayout) {
+      stickPointerIdRef.current = null;
+      firePointerIdRef.current = null;
+      setFireActive(false);
+      onMoveRef.current(0, 0, 0);
+      onFireRef.current(false);
+    } else {
+      dragPointerIdRef.current = null;
+    }
+  }, [editingLayout]);
+
+  const toLogicalElementBox = (
+    el: HTMLDivElement | null
+  ): { left: number; top: number; width: number; height: number } => {
+    if (!el) return { left: 0, top: 0, width: 640, height: 360 };
     const rect = el.getBoundingClientRect();
     if (!isPortraitRotated) {
       return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
@@ -149,13 +180,13 @@ export function VirtualControls({
   };
 
   const handleStickPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (stickPointerIdRef.current !== null) return;
+    if (editingLayout || stickPointerIdRef.current !== null) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
     stickPointerIdRef.current = e.pointerId;
 
     const pt = toLogicalPoint(e.clientX, e.clientY);
-    const box = getLogicalZoneBox();
+    const box = toLogicalElementBox(zoneRef.current);
     const pad = outerRadius + 8;
     const cx = Math.max(pad, Math.min(box.width - pad, pt.x - box.left));
     const cy = Math.max(pad, Math.min(box.height - pad, pt.y - box.top));
@@ -173,10 +204,10 @@ export function VirtualControls({
   };
 
   const handleStickPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.pointerId !== stickPointerIdRef.current) return;
+    if (editingLayout || e.pointerId !== stickPointerIdRef.current) return;
     e.preventDefault();
     const pt = toLogicalPoint(e.clientX, e.clientY);
-    const box = getLogicalZoneBox();
+    const box = toLogicalElementBox(zoneRef.current);
     updateStickFromPoint(pt.x - box.left, pt.y - box.top);
   };
 
@@ -193,7 +224,27 @@ export function VirtualControls({
     resetStick();
   };
 
+  const updateFireDragPosition = (clientX: number, clientY: number) => {
+    const pt = toLogicalPoint(clientX, clientY);
+    const box = toLogicalElementBox(containerRef.current);
+    if (box.width <= 1 || box.height <= 1) return;
+    const nextPos = clampFireButtonPosition({
+      xFrac: (pt.x - box.left) / box.width,
+      yFrac: (pt.y - box.top) / box.height,
+    });
+    onFireButtonPosChange?.(nextPos);
+  };
+
   const handleFirePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (editingLayout) {
+      if (dragPointerIdRef.current !== null) return;
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      dragPointerIdRef.current = e.pointerId;
+      updateFireDragPosition(e.clientX, e.clientY);
+      return;
+    }
+
     if (firePointerIdRef.current !== null) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -202,7 +253,27 @@ export function VirtualControls({
     onFireRef.current(true);
   };
 
+  const handleFirePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!editingLayout || e.pointerId !== dragPointerIdRef.current) return;
+    e.preventDefault();
+    updateFireDragPosition(e.clientX, e.clientY);
+  };
+
   const handleFirePointerEnd = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (editingLayout) {
+      if (e.pointerId !== dragPointerIdRef.current) return;
+      e.preventDefault();
+      if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          // ignore
+        }
+      }
+      dragPointerIdRef.current = null;
+      return;
+    }
+
     if (e.pointerId !== firePointerIdRef.current) return;
     e.preventDefault();
     if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
@@ -222,11 +293,48 @@ export function VirtualControls({
     ? ITEM_ACCENT_COLORS[activeItemKind as ItemKind]
     : undefined;
 
+  const fireStylePosition = fireButtonPos
+    ? {
+        left: `calc(${(fireButtonPos.xFrac * 100).toFixed(2)}% - ${fireSize / 2}px)`,
+        top: `calc(${(fireButtonPos.yFrac * 100).toFixed(2)}% - ${fireSize / 2}px)`,
+      }
+    : {
+        right: isUltraCompact ? 18 : 26,
+        bottom: isUltraCompact ? 26 : 30,
+      };
+
   return (
     <div
+      ref={containerRef}
       data-testid="mobile-virtual-controls"
-      className="pointer-events-none absolute inset-0 z-30 touch-game-surface"
+      className={`${
+        editingLayout ? 'pointer-events-auto bg-[#1C2127]/28' : 'pointer-events-none'
+      } absolute inset-0 z-30 touch-game-surface`}
     >
+      {/* 自定义键位位置顶部条 */}
+      {editingLayout && (
+        <div className="pointer-events-auto absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#FAF8F4] border border-[#1C2127] shadow-xl whitespace-nowrap">
+          <Move className="w-3.5 h-3.5 text-[#D9432B]" aria-hidden="true" />
+          <span className="text-xs font-bold text-[#1C2127]">拖动开火按钮调整位置</span>
+          <button
+            type="button"
+            onClick={onResetFireButtonPos}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#EAE5DA] hover:bg-[#DFD9CB] text-[11px] font-semibold text-[#1C2127] cursor-pointer"
+          >
+            <RotateCcw className="w-3 h-3" aria-hidden="true" />
+            恢复默认
+          </button>
+          <button
+            type="button"
+            onClick={onDoneEditingLayout}
+            className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#D9432B] hover:bg-[#BE3620] text-[11px] font-bold text-white cursor-pointer"
+          >
+            <Check className="w-3 h-3" aria-hidden="true" />
+            完成保存
+          </button>
+        </div>
+      )}
+
       {/* 左半区：浮动虚拟摇杆响应热区 */}
       <div
         ref={zoneRef}
@@ -237,17 +345,19 @@ export function VirtualControls({
         onPointerCancel={handleStickPointerUp}
         onLostPointerCapture={handleStickPointerUp}
         onContextMenu={(e) => e.preventDefault()}
-        className="pointer-events-auto absolute left-0 top-0 bottom-0 w-[46%] touch-game-surface"
+        className={`${
+          editingLayout ? 'pointer-events-none' : 'pointer-events-auto'
+        } absolute left-0 top-0 bottom-0 w-[46%] touch-game-surface`}
       >
-        {/* 静态提示底座：未触控时展示轻量落指参考位置 */}
+        {/* 静态提示底座：未触控时展示轻量落指参考位置（避开左下角回合标记） */}
         {!stickVisual.active && (
           <div
             style={{
               width: outerRadius * 2,
               height: outerRadius * 2,
               left: isUltraCompact ? 18 : 26,
-              bottom: isUltraCompact ? 14 : 22,
-              opacity: baseOpacity,
+              bottom: isUltraCompact ? 26 : 30,
+              opacity: editingLayout ? 0.35 : baseOpacity,
             }}
             className="pointer-events-none absolute rounded-full border-2 border-dashed border-[#1C2127]/70 bg-[#FAF8F4]/55 flex items-center justify-center shadow-sm"
           >
@@ -260,8 +370,8 @@ export function VirtualControls({
           </div>
         )}
 
-        {/* 激活态浮动摇杆：中心精准跟随落指，支持 360° 方向高亮环 */}
-        {stickVisual.active && (
+        {/* 激活态浮动摇杆 */}
+        {stickVisual.active && !editingLayout && (
           <div
             style={{
               width: outerRadius * 2,
@@ -272,7 +382,6 @@ export function VirtualControls({
             }}
             className="pointer-events-none absolute rounded-full border-2 border-[#1C2127]/85 bg-[#FAF8F4]/72 shadow-md"
           >
-            {/* 死区参考细环 */}
             <div
               style={{
                 width: maxTravel * DEADZONE_RATIO * 2,
@@ -281,7 +390,6 @@ export function VirtualControls({
               className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#1C2127]/25"
             />
 
-            {/* 推杆方向指针刻度 */}
             {stickVisual.magnitude > 0 && (
               <div
                 style={{
@@ -296,7 +404,6 @@ export function VirtualControls({
               </div>
             )}
 
-            {/* 摇杆拇指帽 */}
             <div
               style={{
                 width: knobRadius * 2,
@@ -314,12 +421,13 @@ export function VirtualControls({
         )}
       </div>
 
-      {/* 右下角：独立大尺寸发射按钮 */}
+      {/* 独立发射按钮（支持自由拖拽调整位置与持久化） */}
       <button
         type="button"
         data-testid="virtual-fire-button"
-        aria-label="发射炮弹"
+        aria-label={editingLayout ? '拖动调整开火按钮位置' : '发射炮弹'}
         onPointerDown={handleFirePointerDown}
+        onPointerMove={handleFirePointerMove}
         onPointerUp={handleFirePointerEnd}
         onPointerCancel={handleFirePointerEnd}
         onLostPointerCapture={handleFirePointerEnd}
@@ -327,16 +435,23 @@ export function VirtualControls({
         style={{
           width: fireSize,
           height: fireSize,
-          right: isUltraCompact ? 18 : 26,
-          bottom: isUltraCompact ? 14 : 22,
-          opacity: fireActive ? Math.min(0.95, baseOpacity + 0.18) : baseOpacity,
+          ...fireStylePosition,
+          opacity: editingLayout
+            ? 0.96
+            : fireActive
+            ? Math.min(0.95, baseOpacity + 0.18)
+            : baseOpacity,
           backgroundColor: fireActive ? '#B8321A' : playerColorHex,
         }}
         className={`pointer-events-auto absolute rounded-full border-[3px] border-[#1C2127] text-white shadow-lg flex flex-col items-center justify-center gap-0.5 touch-game-surface transition-transform duration-75 ${
-          fireActive ? 'scale-95' : 'scale-100'
+          editingLayout
+            ? 'ring-4 ring-dashed ring-[#F5C469] cursor-move scale-105'
+            : fireActive
+            ? 'scale-95'
+            : 'scale-100'
         }`}
       >
-        {activeItemKind ? (
+        {activeItemKind && !editingLayout ? (
           <div
             style={{
               backgroundColor: itemAccent?.bg ?? '#FAF8F4',
@@ -347,8 +462,17 @@ export function VirtualControls({
             <TankItemIcon kind={activeItemKind} className="w-5 h-5" />
           </div>
         ) : null}
-        <Crosshair className="w-6 h-6" strokeWidth={2.5} aria-hidden="true" />
-        <span className="text-[11px] font-extrabold tracking-wide leading-none">开火</span>
+        {editingLayout ? (
+          <>
+            <Move className="w-6 h-6" strokeWidth={2.4} aria-hidden="true" />
+            <span className="text-[10px] font-extrabold leading-none">拖动定位</span>
+          </>
+        ) : (
+          <>
+            <Crosshair className="w-6 h-6" strokeWidth={2.5} aria-hidden="true" />
+            <span className="text-[11px] font-extrabold tracking-wide leading-none">开火</span>
+          </>
+        )}
       </button>
     </div>
   );
