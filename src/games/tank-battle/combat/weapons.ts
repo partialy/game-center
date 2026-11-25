@@ -11,9 +11,42 @@ import {
   type TankEntity,
   type TankWorldState,
 } from '../types';
-import { fireLaserRay, spawnProjectileFromMuzzle } from './projectiles';
+import {
+  FRAG_SHARD_SPEED_MULT,
+  fireLaserRay,
+  spawnProjectileFromMuzzle,
+} from './projectiles';
 
 const DEG_TO_RAD = Math.PI / 180;
+
+export const FRAG_PARENT_RADIUS = SPECIAL_BULLET_RADIUS + 1;
+export const FRAG_PARENT_SPEED_MULT = 0.92;
+export const RAPID_FIRE_SPEED_MULT = 1.04;
+
+/** 纯几何计算散弹扇形各弹丸出膛角度 */
+export function computeShotgunPelletAngles(baseAngle: number, rules: TankBattleRules): number[] {
+  const pellets = Math.max(2, rules.shotgunPellets);
+  const totalSpreadRad = rules.shotgunSpreadAngleDeg * DEG_TO_RAD;
+  const angles: number[] = [];
+  for (let pIdx = 0; pIdx < pellets; pIdx += 1) {
+    const frac = pellets === 1 ? 0 : pIdx / (pellets - 1) - 0.5;
+    angles.push(baseAngle + frac * totalSpreadRad);
+  }
+  return angles;
+}
+
+/** 纯几何计算车尾布雷坐标（经迷宫碰墙推离） */
+export function computeMinePlacement(
+  tankX: number,
+  tankY: number,
+  tankAngle: number,
+  maze: TankWorldState['maze']
+): { x: number; y: number } {
+  const rearDist = TANK_RADIUS + MINE_VISUAL_RADIUS + 2;
+  const rawX = tankX - Math.cos(tankAngle) * rearDist;
+  const rawY = tankY - Math.sin(tankAngle) * rearDist;
+  return resolveCircleMazeCollision(rawX, rawY, MINE_VISUAL_RADIUS, maze);
+}
 
 /**
  * 步首执行到时的弹药补充：
@@ -126,8 +159,8 @@ export function processWeaponActions(
           world,
           tank,
           tank.angle,
-          rules.normalBulletSpeed * 0.92,
-          SPECIAL_BULLET_RADIUS + 1,
+          rules.normalBulletSpeed * FRAG_PARENT_SPEED_MULT,
+          FRAG_PARENT_RADIUS,
           'frag_parent',
           rules.fragDetonateDelaySeconds + rules.fragShardLifetimeSeconds,
           nextId,
@@ -139,10 +172,7 @@ export function processWeaponActions(
         tank.offense = null;
         tank.fireReadyAt = battleTime + rules.normalFireCooldownSeconds;
         recordItemUsed(world, tank.slotId, 'mine');
-        const rearDist = TANK_RADIUS + MINE_VISUAL_RADIUS + 2;
-        const rawX = tank.x - Math.cos(tank.angle) * rearDist;
-        const rawY = tank.y - Math.sin(tank.angle) * rearDist;
-        const safePos = resolveCircleMazeCollision(rawX, rawY, MINE_VISUAL_RADIUS, world.maze);
+        const safePos = computeMinePlacement(tank.x, tank.y, tank.angle, world.maze);
         world.mines.push({
           id: nextId(),
           ownerSlotId: tank.slotId,
@@ -176,7 +206,7 @@ export function processWeaponActions(
         world,
         tank,
         tank.angle,
-        rules.normalBulletSpeed * 1.04,
+        rules.normalBulletSpeed * RAPID_FIRE_SPEED_MULT,
         NORMAL_BULLET_RADIUS,
         'rapid_fire',
         rules.normalBulletLifetimeSeconds,
@@ -207,11 +237,9 @@ export function processWeaponActions(
         recordItemUsed(world, tank.slotId, 'shotgun');
       }
 
-      const pellets = Math.max(2, rules.shotgunPellets);
-      const totalSpreadRad = rules.shotgunSpreadAngleDeg * DEG_TO_RAD;
-      for (let pIdx = 0; pIdx < pellets; pIdx += 1) {
-        const frac = pellets === 1 ? 0 : pIdx / (pellets - 1) - 0.5;
-        const pelletAngle = tank.angle + frac * totalSpreadRad;
+      const pelletAngles = computeShotgunPelletAngles(tank.angle, rules);
+      for (let pIdx = 0; pIdx < pelletAngles.length; pIdx += 1) {
+        const pelletAngle = pelletAngles[pIdx];
         spawnProjectileFromMuzzle(
           world,
           tank,

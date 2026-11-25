@@ -1,4 +1,5 @@
 import {
+  CELL_SIZE,
   type MazeData,
   TANK_RADIUS,
   type TankEntity,
@@ -6,6 +7,76 @@ import {
   WALL_HALF,
   type WallSegment,
 } from '../types';
+
+interface MazeWallSpatialIndex {
+  cols: number;
+  rows: number;
+  /** 每个格子对应的升序墙索引列表（含跨边界预扩边距 WALL_HALF + TANK_RADIUS + 8） */
+  cellWalls: Int16Array[];
+  wallMinX: Float64Array;
+  wallMaxX: Float64Array;
+  wallMinY: Float64Array;
+  wallMaxY: Float64Array;
+  seenStamp: Uint32Array;
+  stampCounter: number;
+}
+
+const mazeWallSpatialCache = new WeakMap<MazeData, MazeWallSpatialIndex>();
+
+function getMazeWallSpatialIndex(maze: MazeData): MazeWallSpatialIndex | null {
+  if (maze.cols <= 0 || maze.rows <= 0 || maze.walls.length === 0) {
+    return null;
+  }
+  const existing = mazeWallSpatialCache.get(maze);
+  if (existing) return existing;
+
+  const cols = maze.cols;
+  const rows = maze.rows;
+  const nWalls = maze.walls.length;
+  const wallMinX = new Float64Array(nWalls);
+  const wallMaxX = new Float64Array(nWalls);
+  const wallMinY = new Float64Array(nWalls);
+  const wallMaxY = new Float64Array(nWalls);
+
+  const buckets: number[][] = Array.from({ length: cols * rows }, () => []);
+  const pad = WALL_HALF + TANK_RADIUS + 10;
+
+  for (let i = 0; i < nWalls; i += 1) {
+    const w = maze.walls[i];
+    const minX = w.x1 < w.x2 ? w.x1 : w.x2;
+    const maxX = w.x1 > w.x2 ? w.x1 : w.x2;
+    const minY = w.y1 < w.y2 ? w.y1 : w.y2;
+    const maxY = w.y1 > w.y2 ? w.y1 : w.y2;
+    wallMinX[i] = minX;
+    wallMaxX[i] = maxX;
+    wallMinY[i] = minY;
+    wallMaxY[i] = maxY;
+
+    const c0 = Math.max(0, Math.floor((minX - pad) / CELL_SIZE));
+    const c1 = Math.min(cols - 1, Math.floor((maxX + pad) / CELL_SIZE));
+    const r0 = Math.max(0, Math.floor((minY - pad) / CELL_SIZE));
+    const r1 = Math.min(rows - 1, Math.floor((maxY + pad) / CELL_SIZE));
+    for (let r = r0; r <= r1; r += 1) {
+      for (let c = c0; c <= c1; c += 1) {
+        buckets[r * cols + c].push(i);
+      }
+    }
+  }
+
+  const built: MazeWallSpatialIndex = {
+    cols,
+    rows,
+    cellWalls: buckets.map((b) => Int16Array.from(b)),
+    wallMinX,
+    wallMaxX,
+    wallMinY,
+    wallMaxY,
+    seenStamp: new Uint32Array(nWalls),
+    stampCounter: 1,
+  };
+  mazeWallSpatialCache.set(maze, built);
+  return built;
+}
 
 export interface SweptHit {
   t: number; // 0..1 步内归一化接触时刻
@@ -53,38 +124,71 @@ export function resolveCircleMazeCollision(
   let ry = y;
   const minDist = radius + WALL_HALF;
   const minDistSq = minDist * minDist;
+  const spatial = radius <= TANK_RADIUS + 2 ? getMazeWallSpatialIndex(maze) : null;
 
   for (let iter = 0; iter < 4; iter += 1) {
     let pushed = false;
-    for (let i = 0; i < maze.walls.length; i += 1) {
-      const w = maze.walls[i];
-      // 快速包围盒过滤
-      const minX = Math.min(w.x1, w.x2) - minDist;
-      const maxX = Math.max(w.x1, w.x2) + minDist;
-      const minY = Math.min(w.y1, w.y2) - minDist;
-      const maxY = Math.max(w.y1, w.y2) + minDist;
-      if (rx < minX || rx > maxX || ry < minY || ry > maxY) continue;
-
-      const cp = closestPointOnSegment(rx, ry, w.x1, w.y1, w.x2, w.y2);
-      if (cp.distSq < minDistSq) {
-        const dist = Math.sqrt(cp.distSq);
-        let nx = 0;
-        let ny = 0;
-        if (dist > 1e-6) {
-          nx = (rx - cp.x) / dist;
-          ny = (ry - cp.y) / dist;
-        } else {
-          // 圆心正好落在墙中心线上的退化情形
-          if (w.orientation === 'h') {
+    if (spatial) {
+      const col = Math.max(0, Math.min(spatial.cols - 1, Math.floor(rx / CELL_SIZE)));
+      const row = Math.max(0, Math.min(spatial.rows - 1, Math.floor(ry / CELL_SIZE)));
+      const list = spatial.cellWalls[row * spatial.cols + col];
+      for (let k = 0; k < list.length; k += 1) {
+        const i = list[k];
+        if (
+          rx < spatial.wallMinX[i] - minDist ||
+          rx > spatial.wallMaxX[i] + minDist ||
+          ry < spatial.wallMinY[i] - minDist ||
+          ry > spatial.wallMaxY[i] + minDist
+        ) {
+          continue;
+        }
+        const w = maze.walls[i];
+        const cp = closestPointOnSegment(rx, ry, w.x1, w.y1, w.x2, w.y2);
+        if (cp.distSq < minDistSq) {
+          const dist = Math.sqrt(cp.distSq);
+          let nx = 0;
+          let ny = 0;
+          if (dist > 1e-6) {
+            nx = (rx - cp.x) / dist;
+            ny = (ry - cp.y) / dist;
+          } else if (w.orientation === 'h') {
             ny = ry >= w.y1 ? 1 : -1;
           } else {
             nx = rx >= w.x1 ? 1 : -1;
           }
+          const overlap = minDist - dist;
+          rx += nx * overlap;
+          ry += ny * overlap;
+          pushed = true;
         }
-        const overlap = minDist - dist;
-        rx += nx * overlap;
-        ry += ny * overlap;
-        pushed = true;
+      }
+    } else {
+      for (let i = 0; i < maze.walls.length; i += 1) {
+        const w = maze.walls[i];
+        const minX = Math.min(w.x1, w.x2) - minDist;
+        const maxX = Math.max(w.x1, w.x2) + minDist;
+        const minY = Math.min(w.y1, w.y2) - minDist;
+        const maxY = Math.max(w.y1, w.y2) + minDist;
+        if (rx < minX || rx > maxX || ry < minY || ry > maxY) continue;
+
+        const cp = closestPointOnSegment(rx, ry, w.x1, w.y1, w.x2, w.y2);
+        if (cp.distSq < minDistSq) {
+          const dist = Math.sqrt(cp.distSq);
+          let nx = 0;
+          let ny = 0;
+          if (dist > 1e-6) {
+            nx = (rx - cp.x) / dist;
+            ny = (ry - cp.y) / dist;
+          } else if (w.orientation === 'h') {
+            ny = ry >= w.y1 ? 1 : -1;
+          } else {
+            nx = rx >= w.x1 ? 1 : -1;
+          }
+          const overlap = minDist - dist;
+          rx += nx * overlap;
+          ry += ny * overlap;
+          pushed = true;
+        }
       }
     }
     // 边界钳位保护
@@ -277,13 +381,27 @@ export function sweepCircleAgainstMaze(
   maze: MazeData
 ): SweptHit | null {
   const EPS_T = 1e-4;
+  const r = radius + WALL_HALF;
+  const sweepMinX = Math.min(x0, x0 + dx) - r;
+  const sweepMaxX = Math.max(x0, x0 + dx) + r;
+  const sweepMinY = Math.min(y0, y0 + dy) - r;
+  const sweepMaxY = Math.max(y0, y0 + dy) + r;
+
   let earliestT = Infinity;
   let sumNx = 0;
   let sumNy = 0;
   let hitCount = 0;
 
   for (let i = 0; i < maze.walls.length; i += 1) {
-    const hit = sweepCircleAgainstWall(x0, y0, dx, dy, radius, maze.walls[i]);
+    const w = maze.walls[i];
+    const wMinX = w.x1 < w.x2 ? w.x1 : w.x2;
+    const wMaxX = w.x1 > w.x2 ? w.x1 : w.x2;
+    if (wMaxX < sweepMinX || wMinX > sweepMaxX) continue;
+    const wMinY = w.y1 < w.y2 ? w.y1 : w.y2;
+    const wMaxY = w.y1 > w.y2 ? w.y1 : w.y2;
+    if (wMaxY < sweepMinY || wMinY > sweepMaxY) continue;
+
+    const hit = sweepCircleAgainstWall(x0, y0, dx, dy, radius, w);
     if (!hit) continue;
     if (hit.t < earliestT - EPS_T) {
       earliestT = hit.t;

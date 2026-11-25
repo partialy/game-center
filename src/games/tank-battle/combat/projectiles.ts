@@ -25,6 +25,71 @@ import {
 
 const DEG_TO_RAD = Math.PI / 180;
 
+export const LASER_RAY_RADIUS = 1.5;
+export const PROJECTILE_WALL_NUDGE = 0.35;
+export const MUZZLE_WALL_NUDGE = 0.4;
+export const LASER_WALL_NUDGE = 0.5;
+export const FRAG_SHARD_SPEED_MULT = 1.12;
+
+export interface MuzzleSpawnResolution {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  selfDamageUnlocked: boolean;
+  bouncedAtMuzzle: boolean;
+  wallHitPoint: Vec2 | null;
+}
+
+/**
+ * 纯几何炮口出膛解析：与实战共享贴墙反射、法线微推与自伤解锁规则。
+ */
+export function resolveMuzzleSpawn(
+  maze: MazeData,
+  tankX: number,
+  tankY: number,
+  angle: number,
+  speed: number,
+  radius: number
+): MuzzleSpawnResolution {
+  const dirX = Math.cos(angle);
+  const dirY = Math.sin(angle);
+  const muzzleDx = dirX * TANK_BARREL_LENGTH;
+  const muzzleDy = dirY * TANK_BARREL_LENGTH;
+
+  let spawnX = tankX + muzzleDx;
+  let spawnY = tankY + muzzleDy;
+  let vx = dirX * speed;
+  let vy = dirY * speed;
+  let selfDamageUnlocked = false;
+  let bouncedAtMuzzle = false;
+  let wallHitPoint: Vec2 | null = null;
+
+  const wallHit = sweepCircleAgainstMaze(tankX, tankY, muzzleDx, muzzleDy, radius, maze);
+  if (wallHit) {
+    spawnX = wallHit.x + wallHit.nx * MUZZLE_WALL_NUDGE;
+    spawnY = wallHit.y + wallHit.ny * MUZZLE_WALL_NUDGE;
+    const dot = vx * wallHit.nx + vy * wallHit.ny;
+    if (dot < 0) {
+      vx -= 2 * dot * wallHit.nx;
+      vy -= 2 * dot * wallHit.ny;
+    }
+    selfDamageUnlocked = true;
+    bouncedAtMuzzle = true;
+    wallHitPoint = { x: wallHit.x, y: wallHit.y };
+  }
+
+  return {
+    x: spawnX,
+    y: spawnY,
+    vx,
+    vy,
+    selfDamageUnlocked,
+    bouncedAtMuzzle,
+    wallHitPoint,
+  };
+}
+
 /**
  * 在炮口生成弹体；若炮口与墙体距离小于炮管长度（贴墙开火），
  * 立即在墙面反射点出膛并解锁自伤，防止弹体嵌入墙内并支持贴墙自毁。
@@ -40,32 +105,12 @@ export function spawnProjectileFromMuzzle(
   nextId: () => number,
   extra?: { detonateAtBattleTime?: number }
 ): ProjectileEntity {
-  const dirX = Math.cos(angle);
-  const dirY = Math.sin(angle);
-  const muzzleDx = dirX * TANK_BARREL_LENGTH;
-  const muzzleDy = dirY * TANK_BARREL_LENGTH;
-
-  let spawnX = tank.x + muzzleDx;
-  let spawnY = tank.y + muzzleDy;
-  let vx = dirX * speed;
-  let vy = dirY * speed;
-  let selfDamageUnlocked = false;
-
-  const wallHit = sweepCircleAgainstMaze(tank.x, tank.y, muzzleDx, muzzleDy, radius, world.maze);
-  if (wallHit) {
-    // 炮口贴墙：在墙前极小安全偏移处生成并立即按法线反射，同时解锁自伤
-    spawnX = wallHit.x + wallHit.nx * 0.4;
-    spawnY = wallHit.y + wallHit.ny * 0.4;
-    const dot = vx * wallHit.nx + vy * wallHit.ny;
-    if (dot < 0) {
-      vx -= 2 * dot * wallHit.nx;
-      vy -= 2 * dot * wallHit.ny;
-    }
-    selfDamageUnlocked = true;
+  const resolved = resolveMuzzleSpawn(world.maze, tank.x, tank.y, angle, speed, radius);
+  if (resolved.bouncedAtMuzzle && resolved.wallHitPoint) {
     world.visualCues.push({
       kind: 'bounce',
-      x: wallHit.x,
-      y: wallHit.y,
+      x: resolved.wallHitPoint.x,
+      y: resolved.wallHitPoint.y,
       colorHex: tank.colorHex,
     });
   }
@@ -75,19 +120,19 @@ export function spawnProjectileFromMuzzle(
     ownerSlotId: tank.slotId,
     colorHex: tank.colorHex,
     source,
-    x: spawnX,
-    y: spawnY,
-    vx,
-    vy,
+    x: resolved.x,
+    y: resolved.y,
+    vx: resolved.vx,
+    vy: resolved.vy,
     radius,
     speed,
     spawnedAtBattleTime: world.battleTime,
     expiresAtBattleTime: world.battleTime + lifetimeSeconds,
-    selfDamageUnlocked,
+    selfDamageUnlocked: resolved.selfDamageUnlocked,
     detonateAtBattleTime: extra?.detonateAtBattleTime,
     repathTimer: 0,
     waypoint: null,
-    trail: [{ x: spawnX, y: spawnY }],
+    trail: [{ x: resolved.x, y: resolved.y }],
   };
   world.projectiles.push(proj);
   return proj;
@@ -104,6 +149,118 @@ export function expireProjectiles(world: TankWorldState): void {
   }
 }
 
+export interface LaserTraceSegment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  bounceIndex: number;
+}
+
+export interface LaserTraceResult {
+  points: Vec2[];
+  segments: LaserTraceSegment[];
+  hitTankSlotId: string | null;
+  hitBounce: number;
+  bouncesExecuted: number;
+}
+
+/**
+ * 无副作用纯几何激光追踪：
+ * 与实战完全同源（半径 1.5、墙角合并法线、0.5 微推、bounce===0 忽略发射者）。
+ */
+export function traceLaserRay(
+  maze: MazeData,
+  tanks: ReadonlyArray<{ slotId: string; x: number; y: number; alive: boolean }>,
+  shooterSlotId: string,
+  shooterX: number,
+  shooterY: number,
+  angle: number,
+  maxBounces: number
+): LaserTraceResult {
+  const maxSegmentDist = Math.hypot(maze.width, maze.height) * 2;
+  let curX = shooterX;
+  let curY = shooterY;
+  let dirX = Math.cos(angle);
+  let dirY = Math.sin(angle);
+
+  const points: Vec2[] = [
+    {
+      x: shooterX + dirX * (TANK_RADIUS * 0.6),
+      y: shooterY + dirY * (TANK_RADIUS * 0.6),
+    },
+  ];
+  const segments: LaserTraceSegment[] = [];
+  let hitTankSlotId: string | null = null;
+  let hitBounce = -1;
+  let bouncesExecuted = 0;
+
+  for (let bounce = 0; bounce <= maxBounces; bounce += 1) {
+    const dx = dirX * maxSegmentDist;
+    const dy = dirY * maxSegmentDist;
+    const wallHit = sweepCircleAgainstMaze(curX, curY, dx, dy, LASER_RAY_RADIUS, maze);
+    const wallT = wallHit ? wallHit.t : 1;
+
+    let earliestSlotId: string | null = null;
+    let earliestTankT = wallT;
+
+    for (let i = 0; i < tanks.length; i += 1) {
+      const target = tanks[i];
+      if (!target.alive) continue;
+      if (bounce === 0 && target.slotId === shooterSlotId) continue;
+      const t = sweepPointAgainstCircle(curX, curY, dx, dy, target.x, target.y, TANK_RADIUS);
+      if (t !== null && t < earliestTankT) {
+        earliestTankT = t;
+        earliestSlotId = target.slotId;
+      }
+    }
+
+    if (earliestSlotId !== null) {
+      const hitX = curX + dx * earliestTankT;
+      const hitY = curY + dy * earliestTankT;
+      points.push({ x: hitX, y: hitY });
+      segments.push({ x1: curX, y1: curY, x2: hitX, y2: hitY, bounceIndex: bounce });
+      hitTankSlotId = earliestSlotId;
+      hitBounce = bounce;
+      bouncesExecuted = bounce;
+      break;
+    }
+
+    if (!wallHit) {
+      const endX = curX + dx;
+      const endY = curY + dy;
+      points.push({ x: endX, y: endY });
+      segments.push({ x1: curX, y1: curY, x2: endX, y2: endY, bounceIndex: bounce });
+      bouncesExecuted = bounce;
+      break;
+    }
+
+    points.push({ x: wallHit.x, y: wallHit.y });
+    segments.push({ x1: curX, y1: curY, x2: wallHit.x, y2: wallHit.y, bounceIndex: bounce });
+    bouncesExecuted = bounce;
+    if (bounce === maxBounces) {
+      break;
+    }
+
+    const dot = dirX * wallHit.nx + dirY * wallHit.ny;
+    dirX -= 2 * dot * wallHit.nx;
+    dirY -= 2 * dot * wallHit.ny;
+    const len = Math.hypot(dirX, dirY) || 1;
+    dirX /= len;
+    dirY /= len;
+    curX = wallHit.x + wallHit.nx * LASER_WALL_NUDGE;
+    curY = wallHit.y + wallHit.ny * LASER_WALL_NUDGE;
+  }
+
+  return {
+    points,
+    segments,
+    hitTankSlotId,
+    hitBounce,
+    bouncesExecuted,
+  };
+}
+
 /**
  * 瞬发激光射线计算：
  * - 沿炮口方向出发，遇墙最多反射 laserMaxBounces 次（墙角合并法线只计 1 次）
@@ -117,100 +274,65 @@ export function fireLaserRay(
   nextId: () => number,
   sounds: SoundEventKind[]
 ): void {
-  const maxBounces = world.rules.laserMaxBounces;
-  const maxSegmentDist = Math.hypot(world.maze.width, world.maze.height) * 2;
-  let curX = shooter.x;
-  let curY = shooter.y;
-  let dirX = Math.cos(shooter.angle);
-  let dirY = Math.sin(shooter.angle);
+  const trace = traceLaserRay(
+    world.maze,
+    world.tanks,
+    shooter.slotId,
+    shooter.x,
+    shooter.y,
+    shooter.angle,
+    world.rules.laserMaxBounces
+  );
 
-  const points: Vec2[] = [
-    {
-      x: shooter.x + dirX * (TANK_RADIUS * 0.6),
-      y: shooter.y + dirY * (TANK_RADIUS * 0.6),
-    },
-  ];
-
-  // 检查枪口到机身外缘之间是否有墙（贴墙发激光直接立即反射）
-  for (let bounce = 0; bounce <= maxBounces; bounce += 1) {
-    const dx = dirX * maxSegmentDist;
-    const dy = dirY * maxSegmentDist;
-    const wallHit = sweepCircleAgainstMaze(curX, curY, dx, dy, 1.5, world.maze);
-    const wallT = wallHit ? wallHit.t : 1;
-
-    // 寻找本段射线命中的第一辆坦克（bounce === 0 时忽略发射者自身）
-    let earliestTank: TankEntity | null = null;
-    let earliestTankT = wallT;
-
-    for (let i = 0; i < world.tanks.length; i += 1) {
-      const target = world.tanks[i];
-      if (!target.alive) continue;
-      if (bounce === 0 && target.slotId === shooter.slotId) continue;
-      const t = sweepPointAgainstCircle(curX, curY, dx, dy, target.x, target.y, TANK_RADIUS);
-      if (t !== null && t < earliestTankT) {
-        earliestTankT = t;
-        earliestTank = target;
-      }
+  if (trace.hitTankSlotId) {
+    const hitTank = world.tanks.find((t) => t.slotId === trace.hitTankSlotId);
+    if (hitTank) {
+      applyDamageToTank(hitTank, world, eliminatedSet, sounds, shooter.slotId);
     }
-
-    if (earliestTank) {
-      const hitX = curX + dx * earliestTankT;
-      const hitY = curY + dy * earliestTankT;
-      points.push({ x: hitX, y: hitY });
-      applyDamageToTank(earliestTank, world, eliminatedSet, sounds, shooter.slotId);
-      break;
-    }
-
-    if (!wallHit) {
-      points.push({ x: curX + dx, y: curY + dy });
-      break;
-    }
-
-    points.push({ x: wallHit.x, y: wallHit.y });
-    if (bounce === maxBounces) {
-      break;
-    }
-
-    // 反射方向，并沿法线微推避免重复命中同一面墙
-    const dot = dirX * wallHit.nx + dirY * wallHit.ny;
-    dirX -= 2 * dot * wallHit.nx;
-    dirY -= 2 * dot * wallHit.ny;
-    const len = Math.hypot(dirX, dirY) || 1;
-    dirX /= len;
-    dirY /= len;
-    curX = wallHit.x + wallHit.nx * 0.5;
-    curY = wallHit.y + wallHit.ny * 0.5;
   }
 
   world.laserBeams.push({
     id: nextId(),
     ownerSlotId: shooter.slotId,
     colorHex: shooter.colorHex,
-    points,
+    points: trace.points,
     remainingVisualSeconds: 0.34,
     maxVisualSeconds: 0.34,
   });
 }
 
 /**
- * 追踪弹沿迷宫通路转向最近对手，受限于最大角速度。
+ * 纯几何计算追踪弹单步速度更新（供实战与同源预测共享）。
  */
-function steerHomingProjectile(proj: ProjectileEntity, world: TankWorldState, dt: number): void {
-  proj.repathTimer = (proj.repathTimer ?? 0) - dt;
-  const projCell = worldToCellIndex(world.maze, proj.x, proj.y);
+export function computeHomingVelocity(
+  maze: MazeData,
+  tanks: ReadonlyArray<{ slotId: string; x: number; y: number; alive: boolean }>,
+  ownerSlotId: string,
+  projX: number,
+  projY: number,
+  vx: number,
+  vy: number,
+  speed: number,
+  turnRateDeg: number,
+  dt: number,
+  repathTimer: number,
+  waypoint: Vec2 | null
+): { vx: number; vy: number; repathTimer: number; waypoint: Vec2 | null } {
+  let nextRepath = repathTimer - dt;
+  let nextWaypoint = waypoint;
+  const projCell = worldToCellIndex(maze, projX, projY);
 
-  // 寻找沿迷宫通道距离最近的存活对手
-  let targetTank: TankEntity | null = null;
+  let targetTank: { slotId: string; x: number; y: number; alive: boolean } | null = null;
   let bestPathDist = Infinity;
   let bestEuclid = Infinity;
-  const distFromProj = computeBfsDistances(world.maze, projCell);
+  const distFromProj = computeBfsDistances(maze, projCell);
 
-  for (let i = 0; i < world.tanks.length; i += 1) {
-    const t = world.tanks[i];
-    if (!t.alive || t.slotId === proj.ownerSlotId) continue;
-    const tCell = worldToCellIndex(world.maze, t.x, t.y);
+  for (let i = 0; i < tanks.length; i += 1) {
+    const t = tanks[i];
+    if (!t.alive || t.slotId === ownerSlotId) continue;
+    const tCell = worldToCellIndex(maze, t.x, t.y);
     const pathDist = distFromProj[tCell];
-    const euclid = Math.hypot(t.x - proj.x, t.y - proj.y);
+    const euclid = Math.hypot(t.x - projX, t.y - projY);
     if (
       pathDist >= 0 &&
       (pathDist < bestPathDist || (pathDist === bestPathDist && euclid < bestEuclid))
@@ -221,36 +343,65 @@ function steerHomingProjectile(proj: ProjectileEntity, world: TankWorldState, dt
     }
   }
 
-  if (!targetTank) return;
-
-  // 若存在直视视线，直接朝对手转向；否则沿迷宫最短通道下一格中心转向
-  let aimX = targetTank.x;
-  let aimY = targetTank.y;
-  if (!hasLineOfSight(world.maze, proj.x, proj.y, targetTank.x, targetTank.y)) {
-    const targetCell = worldToCellIndex(world.maze, targetTank.x, targetTank.y);
-    if (proj.repathTimer <= 0 || !proj.waypoint) {
-      const nextCellIndex = findNextPathCell(world.maze, projCell, targetCell);
-      const nextCell = world.maze.cells[nextCellIndex];
-      proj.waypoint = { x: nextCell.centerX, y: nextCell.centerY };
-      proj.repathTimer = 0.08;
-    }
-    aimX = proj.waypoint.x;
-    aimY = proj.waypoint.y;
-  } else {
-    proj.waypoint = { x: targetTank.x, y: targetTank.y };
+  if (!targetTank) {
+    return { vx, vy, repathTimer: nextRepath, waypoint: nextWaypoint };
   }
 
-  const curAngle = Math.atan2(proj.vy, proj.vx);
-  const desiredAngle = Math.atan2(aimY - proj.y, aimX - proj.x);
+  let aimX = targetTank.x;
+  let aimY = targetTank.y;
+  if (!hasLineOfSight(maze, projX, projY, targetTank.x, targetTank.y)) {
+    const targetCell = worldToCellIndex(maze, targetTank.x, targetTank.y);
+    if (nextRepath <= 0 || !nextWaypoint) {
+      const nextCellIndex = findNextPathCell(maze, projCell, targetCell);
+      const nextCell = maze.cells[nextCellIndex];
+      nextWaypoint = { x: nextCell.centerX, y: nextCell.centerY };
+      nextRepath = 0.08;
+    }
+    aimX = nextWaypoint.x;
+    aimY = nextWaypoint.y;
+  } else {
+    nextWaypoint = { x: targetTank.x, y: targetTank.y };
+  }
+
+  const curAngle = Math.atan2(vy, vx);
+  const desiredAngle = Math.atan2(aimY - projY, aimX - projX);
   let delta = desiredAngle - curAngle;
   while (delta > Math.PI) delta -= Math.PI * 2;
   while (delta < -Math.PI) delta += Math.PI * 2;
 
-  const maxTurn = world.rules.homingTurnRateDeg * DEG_TO_RAD * dt;
+  const maxTurn = turnRateDeg * DEG_TO_RAD * dt;
   const clampedDelta = Math.max(-maxTurn, Math.min(maxTurn, delta));
   const nextAngle = curAngle + clampedDelta;
-  proj.vx = Math.cos(nextAngle) * proj.speed;
-  proj.vy = Math.sin(nextAngle) * proj.speed;
+  return {
+    vx: Math.cos(nextAngle) * speed,
+    vy: Math.sin(nextAngle) * speed,
+    repathTimer: nextRepath,
+    waypoint: nextWaypoint,
+  };
+}
+
+/**
+ * 追踪弹沿迷宫通路转向最近对手，受限于最大角速度。
+ */
+function steerHomingProjectile(proj: ProjectileEntity, world: TankWorldState, dt: number): void {
+  const res = computeHomingVelocity(
+    world.maze,
+    world.tanks,
+    proj.ownerSlotId,
+    proj.x,
+    proj.y,
+    proj.vx,
+    proj.vy,
+    proj.speed,
+    world.rules.homingTurnRateDeg,
+    dt,
+    proj.repathTimer ?? 0,
+    proj.waypoint ?? null
+  );
+  proj.vx = res.vx;
+  proj.vy = res.vy;
+  proj.repathTimer = res.repathTimer;
+  proj.waypoint = res.waypoint;
 }
 
 /**
@@ -264,7 +415,7 @@ function detonateFragParent(
   sounds: SoundEventKind[]
 ): void {
   const count = world.rules.fragShardCount;
-  const shardSpeed = world.rules.normalBulletSpeed * 1.12;
+  const shardSpeed = world.rules.normalBulletSpeed * FRAG_SHARD_SPEED_MULT;
   const shardExpiresAt = world.battleTime + world.rules.fragShardLifetimeSeconds;
   const baseAngle = Math.atan2(parent.vy, parent.vx);
 

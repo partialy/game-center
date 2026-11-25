@@ -19,6 +19,122 @@ function normalizeAngleDelta(delta: number): number {
   return d;
 }
 
+export interface TankMotionInput {
+  forward: boolean;
+  backward: boolean;
+  turnLeft: boolean;
+  turnRight: boolean;
+}
+
+export interface TankMotionPose {
+  x: number;
+  y: number;
+  angle: number;
+  moveHoldTime: number;
+  treadDistance: number;
+}
+
+/**
+ * 纯几何单车运动步进：给定当前姿态、4 向动作与步长 dt，计算撞墙解算后的下一姿态。
+ * 同时供真实模拟循环与 AI 物理预测复用，确保速度、转向限速与轻点窗口完全一致。
+ */
+export function stepTankMotion(
+  pose: TankMotionPose,
+  maze: MazeData,
+  rules: TankBattleRules,
+  actions: TankMotionInput,
+  dt: number
+): TankMotionPose {
+  const baseTurnSpeedRad = rules.tankTurnSpeedDeg * DEG_TO_RAD;
+  const intuitiveTurnSpeedRad = baseTurnSpeedRad * 1.45;
+  const { forward, backward, turnLeft: left, turnRight: right } = actions;
+
+  if (rules.controlMode === 'classic') {
+    let turnDir = 0;
+    if (left) turnDir -= 1;
+    if (right) turnDir += 1;
+    const nextAngle = pose.angle + turnDir * baseTurnSpeedRad * dt;
+
+    let moveSpeed = 0;
+    if (forward && !backward) {
+      moveSpeed = rules.tankForwardSpeed;
+    } else if (backward && !forward) {
+      moveSpeed = -rules.tankReverseSpeed;
+    }
+
+    if (moveSpeed !== 0) {
+      const nextX = pose.x + Math.cos(nextAngle) * moveSpeed * dt;
+      const nextY = pose.y + Math.sin(nextAngle) * moveSpeed * dt;
+      const resolved = resolveCircleMazeCollision(nextX, nextY, TANK_RADIUS, maze);
+      const moved = Math.hypot(resolved.x - pose.x, resolved.y - pose.y);
+      return {
+        x: resolved.x,
+        y: resolved.y,
+        angle: nextAngle,
+        moveHoldTime: 0,
+        treadDistance: pose.treadDistance + moved * (moveSpeed >= 0 ? 1 : -1),
+      };
+    }
+
+    return {
+      x: pose.x,
+      y: pose.y,
+      angle: nextAngle,
+      moveHoldTime: 0,
+      treadDistance: pose.treadDistance,
+    };
+  }
+
+  // ===== 直觉转向模式（屏幕 8 向 + 最短圆弧平滑转向 + 轻点微调） =====
+  const inputX = (right ? 1 : 0) - (left ? 1 : 0);
+  const inputY = (backward ? 1 : 0) - (forward ? 1 : 0);
+
+  if (inputX === 0 && inputY === 0) {
+    return {
+      x: pose.x,
+      y: pose.y,
+      angle: pose.angle,
+      moveHoldTime: 0,
+      treadDistance: pose.treadDistance,
+    };
+  }
+
+  const nextHoldTime = pose.moveHoldTime + dt;
+  const targetAngle = Math.atan2(inputY, inputX);
+  const angleDiff = normalizeAngleDelta(targetAngle - pose.angle);
+  const absDiff = Math.abs(angleDiff);
+  const maxStep = intuitiveTurnSpeedRad * dt;
+
+  const nextAngle =
+    absDiff <= maxStep ? targetAngle : pose.angle + Math.sign(angleDiff) * maxStep;
+
+  const isMicroTapAiming =
+    nextHoldTime < MICRO_TAP_AIM_WINDOW_SECONDS &&
+    absDiff > MICRO_TAP_ANGLE_THRESHOLD_RAD;
+
+  const speedFactor = isMicroTapAiming
+    ? 0.14
+    : Math.max(0.45, Math.cos(absDiff * 0.5));
+
+  const dirLen = Math.hypot(inputX, inputY) || 1;
+  const dirX = inputX / dirLen;
+  const dirY = inputY / dirLen;
+  const stepDist = rules.tankForwardSpeed * speedFactor * dt;
+
+  const nextX = pose.x + dirX * stepDist;
+  const nextY = pose.y + dirY * stepDist;
+  const resolved = resolveCircleMazeCollision(nextX, nextY, TANK_RADIUS, maze);
+  const moved = Math.hypot(resolved.x - pose.x, resolved.y - pose.y);
+
+  return {
+    x: resolved.x,
+    y: resolved.y,
+    angle: nextAngle,
+    moveHoldTime: nextHoldTime,
+    treadDistance: pose.treadDistance + moved,
+  };
+}
+
 /**
  * 更新所有存活坦克的转向与位移，并解决墙体与坦克间阻挡。
  * 支持两种可切换操控模式：
@@ -33,9 +149,6 @@ export function updateTankMovement(
   input: InputFrame,
   dt: number
 ): void {
-  const baseTurnSpeedRad = rules.tankTurnSpeedDeg * DEG_TO_RAD;
-  const intuitiveTurnSpeedRad = baseTurnSpeedRad * 1.45;
-
   for (let i = 0; i < tanks.length; i += 1) {
     const tank = tanks[i];
     if (!tank.alive) continue;
@@ -48,85 +161,24 @@ export function updateTankMovement(
       tank.hitFlashTimer = Math.max(0, tank.hitFlashTimer - dt);
     }
 
-    const left = input.getAction(tank.slotId, 'turnLeft').held;
-    const right = input.getAction(tank.slotId, 'turnRight').held;
-    const forward = input.getAction(tank.slotId, 'forward').held;
-    const backward = input.getAction(tank.slotId, 'backward').held;
+    const nextPose = stepTankMotion(
+      tank,
+      maze,
+      rules,
+      {
+        turnLeft: input.getAction(tank.slotId, 'turnLeft').held,
+        turnRight: input.getAction(tank.slotId, 'turnRight').held,
+        forward: input.getAction(tank.slotId, 'forward').held,
+        backward: input.getAction(tank.slotId, 'backward').held,
+      },
+      dt
+    );
 
-    if (rules.controlMode === 'classic') {
-      tank.moveHoldTime = 0;
-      let turnDir = 0;
-      if (left) turnDir -= 1;
-      if (right) turnDir += 1;
-      tank.angle += turnDir * baseTurnSpeedRad * dt;
-
-      let moveSpeed = 0;
-      if (forward && !backward) {
-        moveSpeed = rules.tankForwardSpeed;
-      } else if (backward && !forward) {
-        moveSpeed = -rules.tankReverseSpeed;
-      }
-
-      if (moveSpeed !== 0) {
-        const prevX = tank.x;
-        const prevY = tank.y;
-        const nextX = tank.x + Math.cos(tank.angle) * moveSpeed * dt;
-        const nextY = tank.y + Math.sin(tank.angle) * moveSpeed * dt;
-        const resolved = resolveCircleMazeCollision(nextX, nextY, TANK_RADIUS, maze);
-        tank.x = resolved.x;
-        tank.y = resolved.y;
-        const moved = Math.hypot(tank.x - prevX, tank.y - prevY);
-        tank.treadDistance += moved * (moveSpeed >= 0 ? 1 : -1);
-      }
-      continue;
-    }
-
-    // ===== 直觉转向模式（屏幕 8 向 + 最短圆弧平滑转向 + 轻点微调） =====
-    const inputX = (right ? 1 : 0) - (left ? 1 : 0);
-    const inputY = (backward ? 1 : 0) - (forward ? 1 : 0);
-
-    if (inputX === 0 && inputY === 0) {
-      tank.moveHoldTime = 0;
-      continue;
-    }
-
-    tank.moveHoldTime += dt;
-
-    const targetAngle = Math.atan2(inputY, inputX);
-    const angleDiff = normalizeAngleDelta(targetAngle - tank.angle);
-    const absDiff = Math.abs(angleDiff);
-    const maxStep = intuitiveTurnSpeedRad * dt;
-
-    if (absDiff <= maxStep) {
-      tank.angle = targetAngle;
-    } else {
-      tank.angle += Math.sign(angleDiff) * maxStep;
-    }
-
-    // 轻点方向键且当前与目标方向有夹角时，优先旋转炮口微调角度（极小位移）；
-    // 对齐或持续按住后沿屏幕目标方向顺滑加速前进
-    const isMicroTapAiming =
-      tank.moveHoldTime < MICRO_TAP_AIM_WINDOW_SECONDS &&
-      absDiff > MICRO_TAP_ANGLE_THRESHOLD_RAD;
-
-    const speedFactor = isMicroTapAiming
-      ? 0.14
-      : Math.max(0.45, Math.cos(absDiff * 0.5));
-
-    const dirLen = Math.hypot(inputX, inputY) || 1;
-    const dirX = inputX / dirLen;
-    const dirY = inputY / dirLen;
-    const stepDist = rules.tankForwardSpeed * speedFactor * dt;
-
-    const prevX = tank.x;
-    const prevY = tank.y;
-    const nextX = tank.x + dirX * stepDist;
-    const nextY = tank.y + dirY * stepDist;
-    const resolved = resolveCircleMazeCollision(nextX, nextY, TANK_RADIUS, maze);
-    tank.x = resolved.x;
-    tank.y = resolved.y;
-    const moved = Math.hypot(tank.x - prevX, tank.y - prevY);
-    tank.treadDistance += moved;
+    tank.x = nextPose.x;
+    tank.y = nextPose.y;
+    tank.angle = nextPose.angle;
+    tank.moveHoldTime = nextPose.moveHoldTime;
+    tank.treadDistance = nextPose.treadDistance;
   }
 
   resolveTankToTankBlocking(tanks, maze);
