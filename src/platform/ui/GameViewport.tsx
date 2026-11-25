@@ -6,6 +6,8 @@ import {
   Copy,
   Eye,
   Home,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   SlidersHorizontal,
@@ -27,7 +29,9 @@ import { buildCompactMatchKeyHint } from '../input/keyboardVisualizer';
 import { soundEngine } from '../session/audio';
 import { SessionHost } from '../session/sessionHost';
 import { PerfMetricsCollector, type PerfSnapshot } from '../debug/perfMonitor';
+import { useMobileViewport } from '../mobile/MobileViewportContext';
 import { DevPerfOverlay } from './DevPerfOverlay';
+import { VirtualControls } from './VirtualControls';
 import { ITEM_ACCENT_COLORS, TankItemIcon } from '../../games/tank-battle/ui/itemIcons';
 import type { ItemKind } from '../../games/tank-battle/types';
 
@@ -67,6 +71,16 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hostRef = useRef<SessionHost<TRules, TWorld> | null>(null);
   const perfCollectorRef = useRef<PerfMetricsCollector>(new PerfMetricsCollector());
+  const {
+    isMobileOrTablet,
+    logicalHeight,
+    virtualControlsOpacity,
+    setVirtualControlsOpacity,
+    isFullscreen,
+    canRequestFullscreen,
+    requestLandscapeFullscreen,
+    exitFullscreen,
+  } = useMobileViewport();
 
   const onMatchFinishedRef = useRef(onMatchFinished);
   onMatchFinishedRef.current = onMatchFinished;
@@ -221,14 +235,35 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
       ? (snapshot.rules as Record<string, unknown>).controlMode
       : undefined;
 
+  const isCompactMobile = isMobileOrTablet && logicalHeight <= 540;
+  const primaryHumanConfig = humanArenaConfigs[0];
+  const primaryHumanHud = primaryHumanConfig
+    ? hud?.players.find((p) => p.slotId === primaryHumanConfig.slotId)
+    : undefined;
+  const primaryActiveItemKind =
+    primaryHumanHud?.statusItems.find((item) => item.tone !== 'shield')?.iconKey ?? null;
+  const showVirtualControls = isMobileOrTablet && Boolean(primaryHumanConfig) && !paused && !settingsOverlayOpen;
+
+  const handleToggleFullscreen = () => {
+    if (isFullscreen) {
+      void exitFullscreen();
+    } else {
+      void requestLandscapeFullscreen();
+    }
+  };
+
   return (
     <div
-      className={`h-screen w-screen overflow-hidden flex flex-col bg-[#E8E3D7] select-none ${
+      className={`h-full w-full overflow-hidden flex flex-col bg-[#E8E3D7] select-none ${
         settingsOverlayOpen ? 'hidden' : ''
       }`}
     >
       {/* 顶部外围状态栏：2 人模式保持经典双栏，3～8 席切换紧凑竞技场计分矩阵（绝不遮挡迷宫） */}
-      <div className="shrink-0 bg-[#FAF8F4] border-b border-[#CFC8B9] px-4 py-2">
+      <div
+        className={`shrink-0 bg-[#FAF8F4] border-b border-[#CFC8B9] ${
+          isCompactMobile ? 'px-2.5 py-1' : 'px-4 py-2'
+        }`}
+      >
         {isMultiSeatArena ? (
           <div
             data-testid="arena-scoreboard-matrix"
@@ -294,6 +329,22 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
                   )}
                 </button>
+                {canRequestFullscreen && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={handleToggleFullscreen}
+                    aria-label={isFullscreen ? '退出全屏' : '全屏横屏'}
+                    title={isFullscreen ? '退出全屏' : '全屏横屏'}
+                    className="w-7 h-7 rounded-md border border-[#D4CEC0] bg-[#F3EFE6] hover:bg-[#E7E1D4] flex items-center justify-center text-[#2C333B] cursor-pointer"
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    ) : (
+                      <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   tabIndex={-1}
@@ -422,7 +473,7 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
             </div>
           </div>
         ) : (
-          <div className="max-w-[1440px] mx-auto grid grid-cols-12 items-center gap-3">
+          <div className={`max-w-[1440px] mx-auto grid grid-cols-12 items-center ${isCompactMobile ? 'gap-1.5' : 'gap-3'}`}>
             {/* P1 状态栏 */}
             <div className="col-span-5 min-w-0">
               {p1 && (
@@ -430,6 +481,7 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                   player={p1}
                   config={p1Config}
                   align="left"
+                  compact={isCompactMobile}
                 />
               )}
             </div>
@@ -485,6 +537,22 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
                   )}
                 </button>
+                {canRequestFullscreen && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={handleToggleFullscreen}
+                    aria-label={isFullscreen ? '退出全屏' : '全屏横屏'}
+                    title={isFullscreen ? '退出全屏' : '全屏横屏'}
+                    className="w-7 h-7 rounded-md border border-[#D4CEC0] bg-[#F3EFE6] hover:bg-[#E7E1D4] flex items-center justify-center text-[#2C333B] cursor-pointer"
+                  >
+                    {isFullscreen ? (
+                      <Minimize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    ) : (
+                      <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   tabIndex={-1}
@@ -527,6 +595,7 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                 player={p2}
                 config={p2Config}
                 align="right"
+                compact={isCompactMobile}
               />
             )}
           </div>
@@ -539,67 +608,84 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
         <canvas
           ref={canvasRef}
           data-testid="battle-canvas"
-          className="absolute inset-0 block w-full h-full"
+          className="absolute inset-0 block w-full h-full touch-game-surface"
         />
 
-        {/* 左侧边栏：2 人模式展示 P1 按键/AI 信息，多席乱斗模式仅在人类参战时展示按键提示 + 开发者调试性能监控 */}
-        <div className="pointer-events-none absolute top-2.5 left-2 z-20 flex flex-col gap-2 w-[146px]">
-          {!isMultiSeatArena && p1Config ? (
-            p1Config.controller === 'ai' ? (
-              <MatchAiInfoCard
-                player={p1Config}
-                runtimeStatus={botStatuses[p1Config.slotId]}
-                testId="p1-ai-badge"
-              />
-            ) : (
-              <MatchKeyHintCard
-                player={p1Config}
-                controlMode={controlMode}
-                testId="p1-key-hints"
-              />
-            )
-          ) : isMultiSeatArena && humanArenaConfigs[0] ? (
-            <MatchKeyHintCard
-              player={humanArenaConfigs[0]}
-              controlMode={controlMode}
-              testId="p1-key-hints"
-            />
-          ) : null}
-          {debugMode && (
-            <DevPerfOverlay
-              embedded
-              snapshot={perfSnapshot}
-              onClose={() => onToggleDebugMode?.()}
-            />
-          )}
-        </div>
-
-        {/* 右侧边栏：2 人模式展示 P2 按键/AI 信息，多席乱斗仅当存在第 2 名人类玩家时展示 */}
-        {!isMultiSeatArena && p2Config ? (
-          <div className="pointer-events-none absolute top-2.5 right-2 z-20 w-[146px]">
-            {p2Config.controller === 'ai' ? (
-              <MatchAiInfoCard
-                player={p2Config}
-                runtimeStatus={botStatuses[p2Config.slotId]}
-                testId="p2-ai-badge"
-              />
-            ) : (
-              <MatchKeyHintCard
-                player={p2Config}
-                controlMode={controlMode}
-                testId="p2-key-hints"
+        {/* 左侧边栏：桌面端展示 P1 按键/AI 信息，移动端隐藏键盘提示避免遮挡摇杆 */}
+        {(!isMobileOrTablet || debugMode) && (
+          <div className="pointer-events-none absolute top-2.5 left-2 z-20 flex flex-col gap-2 w-[146px]">
+            {!isMobileOrTablet && (
+              !isMultiSeatArena && p1Config ? (
+                p1Config.controller === 'ai' ? (
+                  <MatchAiInfoCard
+                    player={p1Config}
+                    runtimeStatus={botStatuses[p1Config.slotId]}
+                    testId="p1-ai-badge"
+                  />
+                ) : (
+                  <MatchKeyHintCard
+                    player={p1Config}
+                    controlMode={controlMode}
+                    testId="p1-key-hints"
+                  />
+                )
+              ) : isMultiSeatArena && humanArenaConfigs[0] ? (
+                <MatchKeyHintCard
+                  player={humanArenaConfigs[0]}
+                  controlMode={controlMode}
+                  testId="p1-key-hints"
+                />
+              ) : null
+            )}
+            {debugMode && (
+              <DevPerfOverlay
+                embedded
+                snapshot={perfSnapshot}
+                onClose={() => onToggleDebugMode?.()}
               />
             )}
           </div>
-        ) : isMultiSeatArena && humanArenaConfigs[1] ? (
-          <div className="pointer-events-none absolute top-2.5 right-2 z-20 w-[146px]">
-            <MatchKeyHintCard
-              player={humanArenaConfigs[1]}
-              controlMode={controlMode}
-              testId="p2-key-hints"
-            />
-          </div>
-        ) : null}
+        )}
+
+        {/* 右侧边栏：桌面端展示 P2 按键/AI 信息，移动端隐藏以免干扰视口 */}
+        {!isMobileOrTablet && (
+          !isMultiSeatArena && p2Config ? (
+            <div className="pointer-events-none absolute top-2.5 right-2 z-20 w-[146px]">
+              {p2Config.controller === 'ai' ? (
+                <MatchAiInfoCard
+                  player={p2Config}
+                  runtimeStatus={botStatuses[p2Config.slotId]}
+                  testId="p2-ai-badge"
+                />
+              ) : (
+                <MatchKeyHintCard
+                  player={p2Config}
+                  controlMode={controlMode}
+                  testId="p2-key-hints"
+                />
+              )}
+            </div>
+          ) : isMultiSeatArena && humanArenaConfigs[1] ? (
+            <div className="pointer-events-none absolute top-2.5 right-2 z-20 w-[146px]">
+              <MatchKeyHintCard
+                player={humanArenaConfigs[1]}
+                controlMode={controlMode}
+                testId="p2-key-hints"
+              />
+            </div>
+          ) : null
+        )}
+
+        {/* 移动端单人虚拟摇杆与发射大按钮 */}
+        {showVirtualControls && (
+          <VirtualControls
+            playerColorHex={primaryHumanConfig?.colorHex}
+            activeItemKind={primaryActiveItemKind}
+            opacityPercent={virtualControlsOpacity}
+            onMoveStickChange={(x, y, mag) => hostRef.current?.setVirtualMoveStick(x, y, mag)}
+            onFireChange={(pressed) => hostRef.current?.setVirtualFirePressed(pressed)}
+          />
+        )}
 
         {/* 回合开战 3-2-1 倒数层（不拦截输入，无 backdrop-blur） */}
         {!paused && hud?.phase === 'countdown' && (
@@ -637,30 +723,30 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
           </div>
         )}
 
-        {/* 暂停模态框（无 backdrop-blur，使用稳重纯色半透明遮罩） */}
+        {/* 暂停模态框（无 backdrop-blur，支持移动端横屏滚动与虚拟按键透明度微调） */}
         {paused && (
           <div
             role="dialog"
             aria-modal="true"
             aria-label="对战已暂停"
-            className="absolute inset-0 bg-[#1C2127]/60 flex items-center justify-center p-6"
+            className="absolute inset-0 z-40 bg-[#1C2127]/60 flex items-center justify-center p-3 sm:p-6"
           >
-            <div className="w-full max-w-sm bg-[#FAF8F4] border border-[#CFC8B9] rounded-xl shadow-2xl p-6 space-y-5">
+            <div className="w-full max-w-sm max-h-[94%] overflow-y-auto bg-[#FAF8F4] border border-[#CFC8B9] rounded-xl shadow-2xl p-4 sm:p-6 space-y-4">
               <div>
                 <p className="text-xs font-semibold text-[#646E7A]">
                   {pauseReason === 'background'
                     ? '页面切入后台已自动暂停'
                     : '计时与弹药补给均已冻结'}
                 </p>
-                <h2 className="font-display text-2xl font-extrabold text-[#1C2127] mt-0.5">
+                <h2 className="font-display text-xl sm:text-2xl font-extrabold text-[#1C2127] mt-0.5">
                   对战已暂停
                 </h2>
               </div>
 
               {hud && (
-                <div className="grid grid-cols-2 gap-3 py-3 border-y border-[#E3DDD0]">
+                <div className="grid grid-cols-2 gap-2.5 py-2.5 border-y border-[#E3DDD0]">
                   {hud.players.map((p) => (
-                    <div key={p.slotId} className="flex items-center justify-between px-3 py-2 bg-[#F2EFE8] rounded-md">
+                    <div key={p.slotId} className="flex items-center justify-between px-3 py-1.5 bg-[#F2EFE8] rounded-md">
                       <span className="flex items-center gap-1.5 text-xs font-bold text-[#1C2127] truncate">
                         <span
                           className="w-2.5 h-2.5 rounded-xs shrink-0"
@@ -673,6 +759,25 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                       </span>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {isMobileOrTablet && !isAiSpectate && (
+                <div className="px-3 py-2.5 bg-[#F2EFE8] border border-[#DED8CA] rounded-lg space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-[#2B323A]">
+                    <span>虚拟按键透明度</span>
+                    <span className="font-mono-num text-[#D9432B]">{virtualControlsOpacity}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={80}
+                    step={5}
+                    value={virtualControlsOpacity}
+                    onChange={(e) => setVirtualControlsOpacity(Number(e.target.value))}
+                    aria-label="虚拟按键透明度"
+                    className="w-full accent-[#D9432B] cursor-pointer"
+                  />
                 </div>
               )}
 
@@ -724,10 +829,12 @@ function PlayerHudStrip({
   player,
   config,
   align,
+  compact = false,
 }: {
   player: PlayerHudEntry;
   config?: PlayerConfig;
   align: 'left' | 'right';
+  compact?: boolean;
 }) {
   const isRight = align === 'right';
   const showPips = player.maxAmmo <= 14;
@@ -737,24 +844,30 @@ function PlayerHudStrip({
 
   return (
     <div
-      className={`flex items-center gap-3.5 ${
+      className={`flex items-center ${compact ? 'gap-2' : 'gap-3.5'} ${
         isRight ? 'flex-row-reverse text-right' : 'flex-row text-left'
       }`}
     >
       {/* 玩家颜色与得分大数字 */}
       <div
-        className="w-12 h-12 rounded-lg flex flex-col items-center justify-center shrink-0 text-white shadow-xs"
+        className={`${
+          compact ? 'w-9 h-9' : 'w-12 h-12'
+        } rounded-lg flex flex-col items-center justify-center shrink-0 text-white shadow-xs`}
         style={{
           backgroundColor: player.alive ? player.colorHex : '#7D8590',
         }}
       >
-        <span className="text-2xl font-display font-extrabold font-mono-num leading-none">
+        <span
+          className={`${
+            compact ? 'text-lg' : 'text-2xl'
+          } font-display font-extrabold font-mono-num leading-none`}
+        >
           {player.score}
         </span>
       </div>
 
       {/* 名称、弹药条与当前道具槽 */}
-      <div className="flex-1 min-w-0 space-y-1.5">
+      <div className={`flex-1 min-w-0 ${compact ? 'space-y-0.5' : 'space-y-1.5'}`}>
         <div
           className={`flex items-center gap-2 ${
             isRight ? 'flex-row-reverse' : 'flex-row'
