@@ -1,3 +1,4 @@
+import { ITEM_SPRITE_URLS } from '../render/tankSprites';
 import type { ItemKind } from '../types';
 
 export const ITEM_ACCENT_COLORS: Record<ItemKind, { bg: string; fg: string; border: string }> = {
@@ -16,9 +17,22 @@ interface ItemIconProps {
 }
 
 /**
- * 与战场内待拾取道具一一对应的七类道具矢量图标。
+ * 与战场内待拾取道具一一对应的七类道具图标（优先使用卡通 WebP 贴图，未知类型回退矢量图标）。
  */
 export function TankItemIcon({ kind, className = 'w-4 h-4' }: ItemIconProps) {
+  const spriteUrl = ITEM_SPRITE_URLS[kind as ItemKind];
+  if (spriteUrl) {
+    return (
+      <img
+        src={spriteUrl}
+        alt=""
+        aria-hidden="true"
+        draggable={false}
+        className={`${className} object-contain select-none`}
+      />
+    );
+  }
+
   switch (kind as ItemKind) {
     case 'shield':
       return (

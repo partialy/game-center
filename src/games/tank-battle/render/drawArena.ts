@@ -16,6 +16,12 @@ import {
   WALL_THICKNESS,
 } from '../types';
 import { ITEM_ACCENT_COLORS } from '../ui/itemIcons';
+import {
+  getDroppedItemSprite,
+  getMineSprite,
+  getTankHullSprite,
+  getTankTurretSprite,
+} from './tankSprites';
 
 interface PooledParticle {
   active: boolean;
@@ -366,87 +372,99 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
     ctx.fill();
     ctx.restore();
 
-    // 左右履带
-    ctx.fillStyle = '#2B3139';
-    roundRectPath(ctx, -20, -16.5, 40, 7, 2.5);
-    ctx.fill();
-    roundRectPath(ctx, -20, 9.5, 40, 7, 2.5);
-    ctx.fill();
-
-    // 履带齿纹（随行驶距离同步滚动）
-    ctx.strokeStyle = '#505A66';
-    ctx.lineWidth = 1.6;
-    const treadPhase = ((tank.treadDistance % 8) + 8) % 8;
-    ctx.beginPath();
-    for (let tx = -18 + treadPhase; tx <= 18; tx += 8) {
-      ctx.moveTo(tx, -16);
-      ctx.lineTo(tx, -10);
-      ctx.moveTo(tx, 10);
-      ctx.lineTo(tx, 16);
-    }
-    ctx.stroke();
-
-    // 主车体涂装
     const hullColor = tank.hitFlashTimer > 0 ? '#FFFFFF' : tank.colorHex;
-    ctx.fillStyle = hullColor;
-    ctx.strokeStyle = '#1C2127';
-    ctx.lineWidth = 2;
-    roundRectPath(ctx, -16.5, -12, 33, 24, 4);
-    ctx.fill();
-    ctx.stroke();
+    const hullSprite = getTankHullSprite(hullColor);
+    const turretSprite = getTankTurretSprite(hullColor);
 
-    // 车体顶部斜切高光与车头方向箭头标记
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
-    roundRectPath(ctx, -12, -9, 24, 6, 2);
-    ctx.fill();
+    if (hullSprite && turretSprite) {
+      // 1024px 原始画布按 17 px / 世界单位对齐，60.2 × 60.2 绘制框与碰撞箱/炮管长度 1:1 吻合
+      const drawSize = 60.2;
+      const half = drawSize / 2;
+      const recoilShift = tank.recoilOffset * 0.55;
 
-    // 车头标识折线
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(10, -4.5);
-    ctx.lineTo(13.5, 0);
-    ctx.lineTo(10, 4.5);
-    ctx.stroke();
+      ctx.drawImage(hullSprite, -half, -half, drawSize, drawSize);
+      ctx.drawImage(turretSprite, -half - recoilShift, -half, drawSize, drawSize);
 
-    // 炮管（带后坐力）
-    const recoil = tank.recoilOffset;
-    const barrelLen = TANK_BARREL_LENGTH - recoil;
-    ctx.fillStyle = '#262D35';
-    ctx.strokeStyle = '#14181C';
-    ctx.lineWidth = 1.5;
-    roundRectPath(ctx, 2 - recoil * 0.4, -3.4, barrelLen, 6.8, 2);
-    ctx.fill();
-    ctx.stroke();
+      if (tank.offense) {
+        const accent = ITEM_ACCENT_COLORS[tank.offense.kind];
+        ctx.fillStyle = accent.fg;
+        ctx.beginPath();
+        ctx.arc(TANK_BARREL_LENGTH - recoilShift + 2.5, 0, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // 资源未加载完成或无 DOM 测试环境时回退经典矢量绘制
+      ctx.fillStyle = '#2B3139';
+      roundRectPath(ctx, -20, -16.5, 40, 7, 2.5);
+      ctx.fill();
+      roundRectPath(ctx, -20, 9.5, 40, 7, 2.5);
+      ctx.fill();
 
-    // 炮口制退器小环
-    ctx.fillStyle = hullColor;
-    ctx.fillRect(barrelLen - 2, -4.2, 4, 8.4);
-    ctx.strokeRect(barrelLen - 2, -4.2, 4, 8.4);
-
-    // 若持有待发射的单次进攻道具，炮口显示对应能量提示点
-    if (tank.offense) {
-      const accent = ITEM_ACCENT_COLORS[tank.offense.kind];
-      ctx.fillStyle = accent.fg;
+      ctx.strokeStyle = '#505A66';
+      ctx.lineWidth = 1.6;
+      const treadPhase = ((tank.treadDistance % 8) + 8) % 8;
       ctx.beginPath();
-      ctx.arc(barrelLen + 2.5, 0, 3.2, 0, Math.PI * 2);
+      for (let tx = -18 + treadPhase; tx <= 18; tx += 8) {
+        ctx.moveTo(tx, -16);
+        ctx.lineTo(tx, -10);
+        ctx.moveTo(tx, 10);
+        ctx.lineTo(tx, 16);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = hullColor;
+      ctx.strokeStyle = '#1C2127';
+      ctx.lineWidth = 2;
+      roundRectPath(ctx, -16.5, -12, 33, 24, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
+      roundRectPath(ctx, -12, -9, 24, 6, 2);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(10, -4.5);
+      ctx.lineTo(13.5, 0);
+      ctx.lineTo(10, 4.5);
+      ctx.stroke();
+
+      const recoil = tank.recoilOffset;
+      const barrelLen = TANK_BARREL_LENGTH - recoil;
+      ctx.fillStyle = '#262D35';
+      ctx.strokeStyle = '#14181C';
+      ctx.lineWidth = 1.5;
+      roundRectPath(ctx, 2 - recoil * 0.4, -3.4, barrelLen, 6.8, 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = hullColor;
+      ctx.fillRect(barrelLen - 2, -4.2, 4, 8.4);
+      ctx.strokeRect(barrelLen - 2, -4.2, 4, 8.4);
+
+      if (tank.offense) {
+        const accent = ITEM_ACCENT_COLORS[tank.offense.kind];
+        ctx.fillStyle = accent.fg;
+        ctx.beginPath();
+        ctx.arc(barrelLen + 2.5, 0, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = hullColor;
+      ctx.strokeStyle = '#1C2127';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(-1, 0, 9.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.34)';
+      ctx.beginPath();
+      ctx.arc(-2.5, -2, 3.6, 0, Math.PI * 2);
       ctx.fill();
     }
-
-    // 炮塔圆顶
-    ctx.fillStyle = hullColor;
-    ctx.strokeStyle = '#1C2127';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(-1, 0, 9.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // 炮塔舱盖高光
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.34)';
-    ctx.beginPath();
-    ctx.arc(-2.5, -2, 3.6, 0, Math.PI * 2);
-    ctx.fill();
 
     ctx.restore();
 
@@ -601,6 +619,7 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
 
   private drawMine(ctx: CanvasRenderingContext2D, mine: MineEntity, world: TankWorldState): void {
     const armed = world.battleTime + 1e-9 >= mine.armedAtBattleTime;
+    const mineSprite = getMineSprite(armed);
     ctx.save();
     ctx.translate(mine.x, mine.y);
 
@@ -619,21 +638,31 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      ctx.fillStyle = '#D6D0C4';
-      ctx.strokeStyle = '#4B525B';
-      ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      ctx.arc(0, 0, MINE_VISUAL_RADIUS, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      if (mineSprite) {
+        const size = 30.4;
+        ctx.drawImage(mineSprite, -size / 2, -size / 2, size, size);
+        ctx.strokeStyle = mine.colorHex;
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        ctx.arc(0, 0, MINE_VISUAL_RADIUS + 2.2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = '#D6D0C4';
+        ctx.strokeStyle = '#4B525B';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(0, 0, MINE_VISUAL_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
 
-      ctx.strokeStyle = mine.colorHex;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(0, 0, MINE_VISUAL_RADIUS - 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
-      ctx.stroke();
+        ctx.strokeStyle = mine.colorHex;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, MINE_VISUAL_RADIUS - 3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+        ctx.stroke();
+      }
     } else {
-      // 已布防状态：微弱触发警戒圈 + 实心雷体 + 放置者涂装核心闪烁
+      // 已布防状态：微弱触发警戒圈 + 雷体 + 放置者涂装核心闪烁
       const blink = 0.55 + 0.45 * Math.sin(this.visualTime * 9);
       ctx.strokeStyle = mine.colorHex;
       ctx.globalAlpha = 0.22;
@@ -643,30 +672,39 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
       ctx.stroke();
       ctx.globalAlpha = 1;
 
-      // 四角引信
-      ctx.strokeStyle = '#262D35';
-      ctx.lineWidth = 2.4;
-      for (let a = 0; a < 4; a += 1) {
-        const ang = (a * Math.PI) / 2 + Math.PI / 4;
+      if (mineSprite) {
+        const size = 30.4;
+        ctx.drawImage(mineSprite, -size / 2, -size / 2, size, size);
+        ctx.fillStyle = mine.colorHex;
+        ctx.globalAlpha = blink;
         ctx.beginPath();
-        ctx.moveTo(Math.cos(ang) * 7, Math.sin(ang) * 7);
-        ctx.lineTo(Math.cos(ang) * (MINE_VISUAL_RADIUS + 3), Math.sin(ang) * (MINE_VISUAL_RADIUS + 3));
+        ctx.arc(0, 0, 3.6, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = '#262D35';
+        ctx.lineWidth = 2.4;
+        for (let a = 0; a < 4; a += 1) {
+          const ang = (a * Math.PI) / 2 + Math.PI / 4;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ang) * 7, Math.sin(ang) * 7);
+          ctx.lineTo(Math.cos(ang) * (MINE_VISUAL_RADIUS + 3), Math.sin(ang) * (MINE_VISUAL_RADIUS + 3));
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = '#2A313A';
+        ctx.strokeStyle = '#14181C';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(0, 0, MINE_VISUAL_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
         ctx.stroke();
+
+        ctx.fillStyle = mine.colorHex;
+        ctx.globalAlpha = blink;
+        ctx.beginPath();
+        ctx.arc(0, 0, 5.2, 0, Math.PI * 2);
+        ctx.fill();
       }
-
-      ctx.fillStyle = '#2A313A';
-      ctx.strokeStyle = '#14181C';
-      ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      ctx.arc(0, 0, MINE_VISUAL_RADIUS, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = mine.colorHex;
-      ctx.globalAlpha = blink;
-      ctx.beginPath();
-      ctx.arc(0, 0, 5.2, 0, Math.PI * 2);
-      ctx.fill();
     }
 
     ctx.restore();
@@ -683,6 +721,7 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
     const blink = rem < 3 ? (Math.sin(this.visualTime * 18) > 0 ? 1 : 0.4) : 1;
     const bob = Math.sin(this.visualTime * 4 + drop.id) * 1.6;
     const palette = ITEM_ACCENT_COLORS[drop.kind];
+    const itemSprite = getDroppedItemSprite(drop.kind);
 
     ctx.save();
     ctx.translate(drop.x, drop.y + bob);
@@ -694,26 +733,40 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
     ctx.ellipse(0, DROP_PICKUP_RADIUS * 0.8, 12, 4, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // 八边形战术补给底座
     const r = DROP_PICKUP_RADIUS;
-    ctx.fillStyle = palette.bg;
-    ctx.strokeStyle = palette.fg;
-    ctx.lineWidth = 2.2;
-    octagonPath(ctx, r);
-    ctx.fill();
-    ctx.stroke();
 
-    // 留场倒计时圆弧
-    ctx.strokeStyle = palette.fg;
-    ctx.lineWidth = 2.5;
-    ctx.globalAlpha = 0.45 * blink;
-    ctx.beginPath();
-    ctx.arc(0, 0, r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
-    ctx.stroke();
-    ctx.globalAlpha = blink;
+    if (itemSprite) {
+      // 八角徽章外框占贴图 82%，按 41.5 绘制使外径精确贴合 DROP_PICKUP_RADIUS = 17
+      const size = 41.5;
+      ctx.drawImage(itemSprite, -size / 2, -size / 2, size, size);
 
-    // 道具专属图标（与 HUD 矢量图标 1:1 匹配）
-    drawItemGlyphOnCanvas(ctx, drop.kind, palette.fg);
+      ctx.strokeStyle = palette.fg;
+      ctx.lineWidth = 2.5;
+      ctx.globalAlpha = 0.45 * blink;
+      ctx.beginPath();
+      ctx.arc(0, 0, r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
+      ctx.stroke();
+    } else {
+      // 八边形战术补给底座
+      ctx.fillStyle = palette.bg;
+      ctx.strokeStyle = palette.fg;
+      ctx.lineWidth = 2.2;
+      octagonPath(ctx, r);
+      ctx.fill();
+      ctx.stroke();
+
+      // 留场倒计时圆弧
+      ctx.strokeStyle = palette.fg;
+      ctx.lineWidth = 2.5;
+      ctx.globalAlpha = 0.45 * blink;
+      ctx.beginPath();
+      ctx.arc(0, 0, r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio);
+      ctx.stroke();
+      ctx.globalAlpha = blink;
+
+      // 道具专属图标（与 HUD 矢量图标 1:1 匹配）
+      drawItemGlyphOnCanvas(ctx, drop.kind, palette.fg);
+    }
 
     ctx.restore();
   }

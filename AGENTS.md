@@ -4,7 +4,7 @@
 
 应用由 `index.html` 和 `src/main.tsx` 启动，项目脚本提供 `dev` 和 `build`。
 
-大厅页头和浏览器标签使用 [圆形 ICO](src/assets/ai-game-certer-icon_round.ico)。
+大厅页头和浏览器标签使用 [圆形 ICO](src/assets/ai-game-certer-icon_round.ico)。《坦克大战》战场精灵贴图位于 `src/assets/tank-battle/`（`256×256` RGBA WebP），由 `src/games/tank-battle/render/tankSprites.ts` 负责异步解码、按玩家涂装离线染色缓存并与碰撞箱等比对齐。
 
 ## 按任务查阅
 
