@@ -298,9 +298,9 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
       aria-modal="true"
       aria-label="AI 脚本工坊"
       data-testid="ai-script-studio-modal"
-      className="fixed inset-0 z-50 bg-[#0B101D]/72 flex items-center justify-center p-4 sm:p-6"
+      className="fixed inset-0 z-50 bg-[#0B101D]/72 flex items-center justify-center p-2 sm:p-6"
     >
-      <div className="w-full max-w-[1220px] h-[min(90vh,820px)] bg-[#FAF8F4] border border-[#CFC8B9] rounded-xl shadow-2xl flex flex-col overflow-hidden text-[#1C2127]">
+      <div className="w-full max-w-[1220px] h-[min(92%,820px)] bg-[#FAF8F4] border border-[#CFC8B9] rounded-xl shadow-2xl flex flex-col overflow-hidden text-[#1C2127]">
         {/* 顶部标题栏 */}
         <header className="shrink-0 px-5 py-3.5 bg-[#222830] text-[#F5F2EB] flex items-center justify-between gap-4 border-b border-white/10">
           <div className="min-w-0">

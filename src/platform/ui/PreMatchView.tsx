@@ -126,10 +126,10 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
     : '开始比赛';
 
   return (
-    <div className="min-h-screen drafting-surface flex flex-col">
+    <div className="min-h-full drafting-surface flex flex-col">
       {/* 顶部操作栏 */}
-      <div className="sticky top-0 z-20 bg-[#F4F1EA]/95 border-b border-[#D8D2C5] px-6 py-3.5">
-        <div className="max-w-[1360px] mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div className="sticky top-0 z-20 bg-[#F4F1EA]/95 border-b border-[#D8D2C5] px-3 sm:px-6 py-2 sm:py-3.5">
+        <div className="max-w-[1360px] mx-auto flex flex-wrap items-center justify-between gap-2 sm:gap-4">
           <div className="flex items-center gap-4 min-w-0">
             <button
               type="button"
@@ -241,7 +241,7 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
         </div>
       </div>
 
-      <main className="flex-1 w-full max-w-[1360px] mx-auto px-6 py-6 space-y-5">
+      <main className="flex-1 w-full max-w-[1360px] mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-4 sm:space-y-5">
         {storageNotice && (
           <div
             role="status"

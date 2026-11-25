@@ -134,10 +134,10 @@ export function MatchResultsView({
       : '道具使用';
 
   return (
-    <main className="min-h-screen drafting-surface flex items-center justify-center p-4 sm:p-6">
+    <main className="min-h-full drafting-surface flex items-start sm:items-center justify-center p-2.5 sm:p-6">
       <div className="w-full max-w-4xl bg-[#FAF8F4] border border-[#D4CEC0] rounded-xl shadow-lg overflow-hidden">
         {/* 顶部胜利横幅 */}
-        <div className="px-6 sm:px-8 py-6 bg-[#222830] text-[#F5F2EB] flex items-center justify-between gap-6">
+        <div className="px-4 sm:px-8 py-4 sm:py-6 bg-[#222830] text-[#F5F2EB] flex items-center justify-between gap-4 sm:gap-6">
           <div>
             <p className="text-xs font-medium text-[#A9B2BC] tracking-wide">
               {isViewingPastMatch ? '坦克大战 · 历史对局回顾' : '坦克大战 · 比赛结算'}
@@ -158,7 +158,7 @@ export function MatchResultsView({
           </div>
         </div>
 
-        <div className="p-6 sm:p-8 space-y-6">
+        <div className="p-4 sm:p-8 space-y-4 sm:space-y-6">
           {/* 选手排行与关键战术指标卡（2 人宽卡 / 3～8 席自适应排行矩阵） */}
           <div
             className={`grid gap-3.5 ${

@@ -13,6 +13,7 @@ import type {
 } from '../games/contracts';
 import { RulesForm } from '../settings/RulesForm';
 import type { KeyCaptureTarget } from '../input/keyboardVisualizer';
+import { useMobileViewport } from '../mobile/MobileViewportContext';
 import { ArenaRosterPanel } from './ArenaRosterPanel';
 import { PlayerSetupPanel, resolveSlotAiSelection, resolveSlotController } from './PlayerSetupPanel';
 import { VisualKeyboard } from './VisualKeyboard';
@@ -132,11 +133,13 @@ export function SettingsView<TRules extends Record<string, unknown>>({
     : humanProfiles[0]?.slotId ?? 'p1';
 
   const botModels = selectedGame.botModels ?? [];
+  const { isMobileOrTablet, virtualControlsOpacity, setVirtualControlsOpacity } =
+    useMobileViewport();
 
   return (
-    <div className="min-h-screen drafting-surface flex flex-col">
-      <div className="sticky top-0 z-20 bg-[#F4F1EA]/95 border-b border-[#D8D2C5] px-6 py-3.5">
-        <div className="max-w-[1200px] mx-auto flex flex-wrap items-center justify-between gap-4">
+    <div className="min-h-full drafting-surface flex flex-col">
+      <div className="sticky top-0 z-20 bg-[#F4F1EA]/95 border-b border-[#D8D2C5] px-3 sm:px-6 py-2 sm:py-3.5">
+        <div className="max-w-[1200px] mx-auto flex flex-wrap items-center justify-between gap-2 sm:gap-4">
           <div className="flex items-center gap-4">
             <button
               type="button"
@@ -282,7 +285,34 @@ export function SettingsView<TRules extends Record<string, unknown>>({
         </div>
       </div>
 
-      <main className="flex-1 w-full max-w-[1200px] mx-auto px-6 py-6 space-y-5">
+      <main className="flex-1 w-full max-w-[1200px] mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-4 sm:space-y-5">
+        {isMobileOrTablet && (
+          <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-3 rounded-lg bg-[#FAF8F4] border border-[#D8D2C5]">
+            <div className="space-y-0.5">
+              <div className="text-xs font-bold text-[#1C2127]">
+                移动端虚拟摇杆与发射按钮透明度
+              </div>
+              <div className="text-[11px] text-[#5E6773]">
+                可在 10%～80% 之间自由调节，兼顾视野透视与拇指盲操辨识度
+              </div>
+            </div>
+            <div className="flex items-center gap-3 min-w-[200px]">
+              <input
+                type="range"
+                min={10}
+                max={80}
+                step={5}
+                value={virtualControlsOpacity}
+                onChange={(e) => setVirtualControlsOpacity(Number(e.target.value))}
+                aria-label="移动端虚拟按键透明度"
+                className="w-36 accent-[#D9432B] cursor-pointer"
+              />
+              <span className="font-mono-num text-xs font-bold text-[#D9432B] w-9 text-right">
+                {virtualControlsOpacity}%
+              </span>
+            </div>
+          </div>
+        )}
         {inPausedMatch && (
           <div
             role="status"

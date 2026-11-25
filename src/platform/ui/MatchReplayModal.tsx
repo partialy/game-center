@@ -328,7 +328,7 @@ export function MatchReplayModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-5xl max-h-[92vh] bg-[#FAF8F4] border border-[#D4CEC0] rounded-xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="w-full max-w-5xl max-h-[92%] bg-[#FAF8F4] border border-[#D4CEC0] rounded-xl shadow-2xl flex flex-col overflow-hidden">
         {/* 顶部栏：回合、时间、实时双方状态（比分 + 弹药 + 当前道具）与关闭 */}
         <header className="px-5 py-3 bg-[#222830] text-[#F5F2EB] flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">

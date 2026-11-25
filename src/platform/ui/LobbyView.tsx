@@ -5,6 +5,8 @@ import {
   ChevronUp,
   Code2,
   Eye,
+  Maximize2,
+  Minimize2,
   Play,
   SlidersHorizontal,
   Swords,
@@ -23,6 +25,7 @@ import {
   type PlayerSlotId,
   type SingleMatchup,
 } from '../games/contracts';
+import { useMobileViewport } from '../mobile/MobileViewportContext';
 import { resolveSlotAiSelection } from './PlayerSetupPanel';
 import { CosmicBackdrop } from './CosmicBackdrop';
 import { LobbyShowcaseCanvas } from './LobbyShowcaseCanvas';
@@ -198,30 +201,74 @@ export function LobbyView({
   const trackOffsetY = computeReelTrackOffset(safeIndex, REEL_ITEM_PITCH_PX);
   const canGoUp = safeIndex > 0;
   const canGoDown = safeIndex < catalog.length - 1;
+  const {
+    isMobileOrTablet,
+    logicalHeight,
+    isFullscreen,
+    canRequestFullscreen,
+    requestLandscapeFullscreen,
+    exitFullscreen,
+  } = useMobileViewport();
+  const isCompactLandscape = isMobileOrTablet && logicalHeight <= 540;
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-[#040712] text-[#F1F5F9] flex flex-col select-none">
+    <main className="relative h-full w-full overflow-hidden bg-[#040712] text-[#F1F5F9] flex flex-col select-none">
       {/* 动态星河宇宙背景 */}
       <CosmicBackdrop />
 
       {/* 顶部极简导航栏 */}
-      <header className="relative z-10 shrink-0 px-6 lg:px-10 py-3.5 border-b border-white/[0.08] bg-[#050918]/72">
-        <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-8">
-          <div className="flex items-center gap-3 min-w-0">
-            <img src={arcadeIconUrl} alt="" width={36} height={36} className="h-9 w-9 shrink-0" />
-            <span className="font-display text-lg font-extrabold tracking-tight text-white whitespace-nowrap shrink-0">
+      <header
+        className={`relative z-10 shrink-0 border-b border-white/[0.08] bg-[#050918]/72 ${
+          isCompactLandscape ? 'px-3.5 py-1.5' : 'px-6 lg:px-10 py-3.5'
+        }`}
+      >
+        <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <img
+              src={arcadeIconUrl}
+              alt=""
+              width={36}
+              height={36}
+              className={isCompactLandscape ? 'h-7 w-7 shrink-0' : 'h-9 w-9 shrink-0'}
+            />
+            <span
+              className={`font-display font-extrabold tracking-tight text-white whitespace-nowrap shrink-0 ${
+                isCompactLandscape ? 'text-base' : 'text-lg'
+              }`}
+            >
               本地双人对战厅
             </span>
           </div>
 
           {primaryPlayableGame && (
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
+              {canRequestFullscreen && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void (isFullscreen ? exitFullscreen() : requestLandscapeFullscreen())
+                  }
+                  aria-label={isFullscreen ? '退出全屏' : '全屏横屏'}
+                  className={`inline-flex items-center gap-1 text-xs font-semibold text-[#E2E8F0] bg-white/[0.07] hover:bg-white/[0.14] border border-white/12 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    isCompactLandscape ? 'px-2.5 py-1.5' : 'px-3 py-2'
+                  }`}
+                >
+                  {isFullscreen ? (
+                    <Minimize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  ) : (
+                    <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  )}
+                  <span className="hidden sm:inline">{isFullscreen ? '退出全屏' : '全屏'}</span>
+                </button>
+              )}
               {primaryPlayableGame.aiSdk && (
                 <button
                   type="button"
                   data-testid="lobby-open-studio-btn"
                   onClick={() => onOpenAiStudio(primaryPlayableGame.id, 'prompt')}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#E0F2FE] bg-[#132544] hover:bg-[#1B335C] border border-[#7DD3FC]/35 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC] focus-visible:outline-offset-2"
+                  className={`inline-flex items-center gap-1.5 text-xs font-semibold text-[#E0F2FE] bg-[#132544] hover:bg-[#1B335C] border border-[#7DD3FC]/35 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC] focus-visible:outline-offset-2 ${
+                    isCompactLandscape ? 'px-2.5 py-1.5' : 'px-3.5 py-2'
+                  }`}
                 >
                   <Code2 className="w-3.5 h-3.5 text-[#7DD3FC]" aria-hidden="true" />
                   AI 脚本工坊
@@ -235,10 +282,14 @@ export function LobbyView({
               <button
                 type="button"
                 onClick={() => onEnterSettings(primaryPlayableGame.id)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-[#E2E8F0] bg-white/[0.07] hover:bg-white/[0.14] border border-white/12 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC] focus-visible:outline-offset-2"
+                className={`inline-flex items-center gap-1.5 text-xs font-semibold text-[#E2E8F0] bg-white/[0.07] hover:bg-white/[0.14] border border-white/12 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC] focus-visible:outline-offset-2 ${
+                  isCompactLandscape ? 'px-2.5 py-1.5' : 'px-3.5 py-2'
+                }`}
               >
                 <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
-                {gameMode === 'single'
+                {isCompactLandscape
+                  ? '规则设置'
+                  : gameMode === 'single'
                   ? '单人规则与 AI 设置'
                   : gameMode === 'brawl'
                   ? 'AI 乱斗规则与阵容'
@@ -250,11 +301,19 @@ export function LobbyView({
       </header>
 
       {/* 主舞台：左 录像带竖屏缩略图 + 中 游戏信息、模式切换与操作 + 右 大屏游玩示例动画 */}
-      <div className="relative z-10 flex-1 min-h-0 max-w-[1440px] w-full mx-auto px-6 lg:px-10 py-5 flex items-stretch gap-6 xl:gap-8">
+      <div
+        className={`relative z-10 flex-1 min-h-0 max-w-[1440px] w-full mx-auto flex items-stretch ${
+          isCompactLandscape
+            ? 'px-3.5 py-2 gap-3.5'
+            : 'px-6 lg:px-10 py-5 gap-6 xl:gap-8'
+        }`}
+      >
         {/* 左侧：录像带竖屏缩略图 + 中央方框框选 */}
         <aside
           aria-label="游戏录像带目录"
-          className="w-[206px] xl:w-[224px] shrink-0 flex flex-col items-center"
+          className={`${
+            isCompactLandscape ? 'w-[148px]' : 'w-[206px] xl:w-[224px]'
+          } shrink-0 flex flex-col items-center`}
         >
           <button
             type="button"
@@ -296,7 +355,9 @@ export function LobbyView({
             <div
               data-testid="reel-selection-frame"
               aria-hidden="true"
-              className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-[166px] xl:w-[178px] h-[112px] rounded-lg border border-[#7DD3FC]/80 shadow-[0_0_26px_rgba(125,211,252,0.24)]"
+              className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 ${
+                isCompactLandscape ? 'w-[126px]' : 'w-[166px] xl:w-[178px]'
+              } h-[112px] rounded-lg border border-[#7DD3FC]/80 shadow-[0_0_26px_rgba(125,211,252,0.24)]`}
             >
               {/* 四角星标取景角括弧 */}
               <span className="absolute -top-[2px] -left-[2px] w-3.5 h-3.5 border-t-2 border-l-2 border-[#F5C469] rounded-tl-sm" />
@@ -339,7 +400,9 @@ export function LobbyView({
                       data-reel-index={idx}
                       onClick={() => selectIndex(idx)}
                       style={{ height: REEL_ITEM_HEIGHT_PX }}
-                      className={`relative w-[156px] xl:w-[168px] rounded-md overflow-hidden border bg-[#0C1429] text-left cursor-pointer shrink-0 transition-[transform,opacity,border-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-2 focus-visible:outline-[#F5C469] ${
+                      className={`relative ${
+                        isCompactLandscape ? 'w-[118px]' : 'w-[156px] xl:w-[168px]'
+                      } rounded-md overflow-hidden border bg-[#0C1429] text-left cursor-pointer shrink-0 transition-[transform,opacity,border-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-2 focus-visible:outline-[#F5C469] ${
                         isSelected
                           ? 'scale-100 opacity-100 border-white/25'
                           : 'scale-[0.9] opacity-55 hover:opacity-88 hover:scale-[0.94] border-white/12'
@@ -421,11 +484,18 @@ export function LobbyView({
         {/* 中右侧：当前选中游戏的详细信息、单人/多人模式切换、AI 难度快选与启动入口 */}
         <section
           aria-label="当前选中游戏详情"
-          className="w-[324px] xl:w-[372px] shrink-0 flex flex-col justify-center min-w-0"
+          className={`${
+            isCompactLandscape
+              ? 'w-[270px] overflow-y-auto pr-1 justify-start'
+              : 'w-[324px] xl:w-[372px] justify-center'
+          } shrink-0 flex flex-col min-w-0`}
         >
           {activeEntry && (
-            <div key={activeEntry.id} className="animate-cosmic-enter space-y-4">
-              <div className="space-y-1.5">
+            <div
+              key={activeEntry.id}
+              className={`animate-cosmic-enter ${isCompactLandscape ? 'space-y-2.5 py-0.5' : 'space-y-4'}`}
+            >
+              <div className="space-y-1">
                 <div className="flex items-center gap-2 text-xs font-semibold">
                   <span
                     className={
@@ -444,14 +514,18 @@ export function LobbyView({
 
                 <h1
                   data-testid="active-game-title"
-                  className="font-display text-3xl xl:text-[36px] font-extrabold tracking-tight text-white leading-[1.12] text-balance"
+                  className={`font-display font-extrabold tracking-tight text-white leading-[1.12] text-balance ${
+                    isCompactLandscape ? 'text-2xl' : 'text-3xl xl:text-[36px]'
+                  }`}
                 >
                   {activeEntry.title}
                 </h1>
 
-                <p className="text-xs font-medium tracking-wide text-[#94A3B8]">
-                  {activeEntry.englishSubtitle}
-                </p>
+                {!isCompactLandscape && (
+                  <p className="text-xs font-medium tracking-wide text-[#94A3B8]">
+                    {activeEntry.englishSubtitle}
+                  </p>
+                )}
 
                 {/* 纯文本分隔元数据 */}
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5 text-xs text-[#CBD5E1]">
@@ -732,22 +806,24 @@ export function LobbyView({
                 </div>
               )}
 
-              {/* 核心玩法要点（单人/乱斗精简 2 项保证一屏无挤压） */}
-              <dl className="pt-3 border-t border-white/10 space-y-2 text-xs">
-                {(activeEntry.playable && gameMode !== 'multi'
-                  ? activeEntry.highlights.slice(0, 2)
-                  : activeEntry.highlights
-                ).map((hl) => (
-                  <div key={hl.label} className="grid grid-cols-12 gap-2 items-baseline">
-                    <dt className="col-span-3 font-semibold text-[#94A3B8] whitespace-nowrap">
-                      {hl.label}
-                    </dt>
-                    <dd className="col-span-9 text-[#E2E8F0] leading-relaxed">
-                      {hl.value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+              {/* 核心玩法要点（桌面展示，紧凑手机横屏隐藏以优先保证操作按钮可及） */}
+              {!isCompactLandscape && (
+                <dl className="pt-3 border-t border-white/10 space-y-2 text-xs">
+                  {(activeEntry.playable && gameMode !== 'multi'
+                    ? activeEntry.highlights.slice(0, 2)
+                    : activeEntry.highlights
+                  ).map((hl) => (
+                    <div key={hl.label} className="grid grid-cols-12 gap-2 items-baseline">
+                      <dt className="col-span-3 font-semibold text-[#94A3B8] whitespace-nowrap">
+                        {hl.label}
+                      </dt>
+                      <dd className="col-span-9 text-[#E2E8F0] leading-relaxed">
+                        {hl.value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
 
               {/* 操作按钮区 */}
               {activeEntry.playable ? (
@@ -845,65 +921,75 @@ export function LobbyView({
         </section>
       </div>
 
-      {/* 底部单行键位与交互引导 */}
-      <footer className="relative z-10 shrink-0 px-6 lg:px-10 py-3 border-t border-white/[0.08] bg-[#050918]/72">
-        <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-4 text-xs text-[#94A3B8]">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span>
-              <strong className="text-[#E2E8F0]">↑ ↓ / 滚轮</strong> 切换游戏
-            </span>
-            <span aria-hidden="true" className="text-[#475569]">
-              ·
-            </span>
-            {gameMode === 'brawl' ? (
-              <span>
-                <strong className="text-[#C084FC]">AI 乱斗</strong> 支持 2～8 席大模型脚本与内置 AI 沙箱混战
-              </span>
-            ) : gameMode === 'single' ? (
-              singleMatchup === 'ai_vs_ai' ? (
+      {/* 底部单行键位与交互引导（矮屏手机横屏自动隐藏以释放更多画布高度） */}
+      {!isCompactLandscape && (
+        <footer className="relative z-10 shrink-0 px-6 lg:px-10 py-3 border-t border-white/[0.08] bg-[#050918]/72">
+          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-4 text-xs text-[#94A3B8]">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              {isMobileOrTablet ? (
                 <span>
-                  <strong className="text-[#7DD3FC]">AI 观战</strong> 双策略脚本自动对战
+                  <strong className="text-[#E2E8F0]">触屏操控</strong> 左半屏浮动摇杆指哪打哪 · 右下大按钮独立开火
                 </span>
               ) : (
                 <>
                   <span>
-                    <strong className="text-[#E2E8F0]">P1</strong> WASD 移动 + 空格 开火
+                    <strong className="text-[#E2E8F0]">↑ ↓ / 滚轮</strong> 切换游戏
                   </span>
                   <span aria-hidden="true" className="text-[#475569]">
                     ·
                   </span>
+                  {gameMode === 'brawl' ? (
+                    <span>
+                      <strong className="text-[#C084FC]">AI 乱斗</strong> 支持 2～8 席大模型脚本与内置 AI 沙箱混战
+                    </span>
+                  ) : gameMode === 'single' ? (
+                    singleMatchup === 'ai_vs_ai' ? (
+                      <span>
+                        <strong className="text-[#7DD3FC]">AI 观战</strong> 双策略脚本自动对战
+                      </span>
+                    ) : (
+                      <>
+                        <span>
+                          <strong className="text-[#E2E8F0]">P1</strong> WASD 移动 + 空格 开火
+                        </span>
+                        <span aria-hidden="true" className="text-[#475569]">
+                          ·
+                        </span>
+                        <span>
+                          <strong className="text-[#7DD3FC]">AI 对手</strong>{' '}
+                          {selectedOpponent?.displayName ?? '战术游击'}（
+                          {selectedOpponent?.tierText ?? 'Lv.2'}）
+                        </span>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <span>
+                        <strong className="text-[#E2E8F0]">P1</strong> WASD 移动 + 空格 开火
+                      </span>
+                      <span aria-hidden="true" className="text-[#475569]">
+                        ·
+                      </span>
+                      <span>
+                        <strong className="text-[#E2E8F0]">P2</strong> 方向键 移动 + Enter 开火
+                      </span>
+                    </>
+                  )}
+                  <span aria-hidden="true" className="text-[#475569]">
+                    ·
+                  </span>
                   <span>
-                    <strong className="text-[#7DD3FC]">AI 对手</strong>{' '}
-                    {selectedOpponent?.displayName ?? '战术游击'}（
-                    {selectedOpponent?.tierText ?? 'Lv.2'}）
+                    <strong className="text-[#E2E8F0]">Esc</strong> 暂停 / 继续
                   </span>
                 </>
-              )
-            ) : (
-              <>
-                <span>
-                  <strong className="text-[#E2E8F0]">P1</strong> WASD 移动 + 空格 开火
-                </span>
-                <span aria-hidden="true" className="text-[#475569]">
-                  ·
-                </span>
-                <span>
-                  <strong className="text-[#E2E8F0]">P2</strong> 方向键 移动 + Enter 开火
-                </span>
-              </>
-            )}
-            <span aria-hidden="true" className="text-[#475569]">
-              ·
-            </span>
-            <span>
-              <strong className="text-[#E2E8F0]">Esc</strong> 暂停 / 继续
+              )}
+            </div>
+            <span className="text-[#64748B]">
+              单人 / 多人 / AI 乱斗规则独立保存 · 支持粘贴大模型 JS/TS 脚本沙箱对战
             </span>
           </div>
-          <span className="text-[#64748B]">
-            单人 / 多人 / AI 乱斗规则独立保存 · 支持粘贴大模型 JS/TS 脚本沙箱对战
-          </span>
-        </div>
-      </footer>
+        </footer>
+      )}
     </main>
   );
 }
