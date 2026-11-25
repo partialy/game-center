@@ -1,0 +1,2128 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-Game · 本地同屏对战大厅（设计稿预览）</title>
+  <style>
+    /* ==========================================================================
+       1. 语义化 Design Tokens（遵循桌面 Web 视觉规范，独立映射深浅色）
+       ========================================================================== */
+    :root {
+      color-scheme: light;
+      --background: #f3f5f9;
+      --bg-grid: rgba(20, 26, 40, 0.035);
+      --panel: #ffffff;
+      --panel-alt: #eef1f6;
+      --panel-elevated: #ffffff;
+      --stage-canvas: #131824;
+      --foreground: #151924;
+      --muted: #586174;
+      --subtle: #788296;
+      --border: #dde2ec;
+      --border-strong: #c5cede;
+      --primary: #3362e0;
+      --primary-fg: #ffffff;
+      --primary-soft: rgba(51, 98, 224, 0.1);
+      --cta: #e07c12;
+      --cta-hover: #c96b08;
+      --cta-fg: #ffffff;
+      --hover: #ebeff6;
+      --selected: #e8eefc;
+      --success: #138a59;
+      --success-soft: rgba(19, 138, 89, 0.12);
+      --danger: #dc3848;
+      --keycap-bg: #ffffff;
+      --keycap-border: #cbd3e1;
+      --keycap-shadow: #b6c0d2;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+      --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08);
+
+      /* 玩家位示例色 */
+      --p1-color: #0ea5e9;
+      --p1-soft: rgba(14, 165, 233, 0.14);
+      --p2-color: #f97316;
+      --p2-soft: rgba(249, 115, 22, 0.14);
+
+      --font-sans: "Inter", "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei UI", system-ui, -apple-system, sans-serif;
+      --font-mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+    }
+
+    html.dark {
+      color-scheme: dark;
+      --background: #0d1017;
+      --bg-grid: rgba(255, 255, 255, 0.025);
+      --panel: #151923;
+      --panel-alt: #1c2230;
+      --panel-elevated: #202737;
+      --stage-canvas: #0b0e15;
+      --foreground: #ebeff7;
+      --muted: #939db2;
+      --subtle: #697389;
+      --border: #262e40;
+      --border-strong: #374259;
+      --primary: #5c8aff;
+      --primary-fg: #0b101d;
+      --primary-soft: rgba(92, 138, 255, 0.14);
+      --cta: #f59e0b;
+      --cta-hover: #fbbf24;
+      --cta-fg: #111318;
+      --hover: #1e2534;
+      --selected: #1e2942;
+      --success: #34d399;
+      --success-soft: rgba(52, 211, 153, 0.14);
+      --danger: #fb7185;
+      --keycap-bg: #232a3b;
+      --keycap-border: #364057;
+      --keycap-shadow: #0f131c;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+      --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.42);
+
+      --p1-color: #38bdf8;
+      --p1-soft: rgba(56, 189, 248, 0.15);
+      --p2-color: #fb923c;
+      --p2-soft: rgba(251, 146, 60, 0.15);
+    }
+
+    /* ==========================================================================
+       2. 基础重置与无障碍焦点
+       ========================================================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100%;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      background-color: var(--background);
+      background-image:
+        linear-gradient(to right, var(--bg-grid) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--bg-grid) 1px, transparent 1px);
+      background-size: 32px 32px;
+      color: var(--foreground);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, select, input {
+      font: inherit;
+      color: inherit;
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    .icon {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+
+    .icon-sm {
+      width: 15px;
+      height: 15px;
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+    }
+
+    /* ==========================================================================
+       3. 顶部设计稿预览状态切换条（仅用于设计稿审阅）
+       ========================================================================== */
+    .proto-bar {
+      background: var(--panel-alt);
+      border-bottom: 1px solid var(--border);
+      padding: 6px 24px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .proto-bar-inner {
+      max-width: 1380px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .proto-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      color: var(--foreground);
+    }
+
+    .proto-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    .proto-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .seg-group {
+      display: inline-flex;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 2px;
+      gap: 2px;
+    }
+
+    .seg-btn {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 3px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background-color 160ms ease, color 160ms ease;
+    }
+
+    .seg-btn:hover {
+      color: var(--foreground);
+    }
+
+    .seg-btn.active {
+      background: var(--selected);
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    /* ==========================================================================
+       4. 站点主导航栏（普通 PC Web 宿主，无伪桌面窗口控制按钮）
+       ========================================================================== */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: color-mix(in srgb, var(--panel) 90%, transparent);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-inner {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: var(--panel-alt);
+      border: 1px solid var(--border-strong);
+      display: grid;
+      place-items: center;
+      color: var(--primary);
+      flex-shrink: 0;
+    }
+
+    .brand-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      color: var(--primary);
+    }
+
+    .brand-sub {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* 平台视图流转指示（对应计划第 2 节：大厅 -> 赛前 -> 对战 -> 结算 + 设置） */
+    .flow-steps {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--subtle);
+    }
+
+    .flow-step {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+    }
+
+    .flow-step.current {
+      background: var(--selected);
+      border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+      color: var(--foreground);
+      font-weight: 600;
+    }
+
+    .flow-step-num {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--primary);
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    /* 全站玩家位状态胶囊（读取浏览器本地存储的玩家资料） */
+    .seats-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 12px;
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: border-color 160ms ease, background-color 160ms ease;
+    }
+
+    .seats-pill:hover {
+      background: var(--hover);
+      border-color: var(--border-strong);
+    }
+
+    .seat-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .seat-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .seat-divider {
+      width: 1px;
+      height: 14px;
+      background: var(--border-strong);
+    }
+
+    .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 34px;
+      padding: 0 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      color: var(--foreground);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color 160ms ease, border-color 160ms ease;
+    }
+
+    .icon-btn:hover {
+      background: var(--hover);
+      border-color: var(--border-strong);
+    }
+
+    /* ==========================================================================
+       5. 主工作区骨架（左栏：已登记游戏清单 | 右栏：当前选中游戏展台与启动台）
+       ========================================================================== */
+    .lobby-shell {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 20px 24px 28px;
+      display: grid;
+      grid-template-columns: 380px minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    /* 左栏：游戏注册表清单 */
+    .catalog-column {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .panel-box {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .section-head {
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .count-pill {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .catalog-list {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .game-card {
+      position: relative;
+      width: 100%;
+      text-align: left;
+      padding: 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: background-color 160ms ease, border-color 160ms ease;
+    }
+
+    .game-card:hover {
+      background: var(--hover);
+      border-color: var(--border-strong);
+    }
+
+    .game-card.selected {
+      background: var(--selected);
+      border-color: var(--primary);
+    }
+
+    .game-card.selected::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 12px;
+      bottom: 12px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--primary);
+    }
+
+    .game-card-top {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .game-thumb {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      display: grid;
+      place-items: center;
+      color: var(--primary);
+      flex-shrink: 0;
+    }
+
+    .game-card-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .game-card-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .game-card-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--foreground);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .players-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--foreground);
+      flex-shrink: 0;
+    }
+
+    .game-card-id {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--subtle);
+      margin-top: 1px;
+    }
+
+    .game-card-desc {
+      margin: 0;
+      font-size: 12.5px;
+      color: var(--muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .game-card-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .preset-mini {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .active-indicator {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--primary);
+      flex-shrink: 0;
+    }
+
+    /* 本地同屏说明卡（丰富左栏信息节奏，尤其首版单游戏态下平衡版面） */
+    .station-card {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .station-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .station-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--foreground);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .storage-ok {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    .station-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+
+    .station-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .station-list li svg {
+      margin-top: 2px;
+      color: var(--primary);
+    }
+
+    /* ==========================================================================
+       6. 右栏：当前选中游戏主舞台与配置快照 (Selected Game Stage)
+       ========================================================================== */
+    .stage-column {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .stage-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+      gap: 0;
+    }
+
+    /* 左侧实时战术画面风格预览区 */
+    .arena-preview-wrap {
+      background: var(--stage-canvas);
+      border-right: 1px solid var(--border);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 310px;
+      position: relative;
+    }
+
+    .arena-top-hud {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #cbd5e1;
+    }
+
+    .hud-score-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 9px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .arena-svg-container {
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: #090c12;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .arena-svg-container svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .arena-caption {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11.5px;
+      color: #94a3b8;
+    }
+
+    /* 右侧选中游戏核心信息与主操作区 */
+    .stage-summary {
+      padding: 22px 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .stage-eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .contract-id {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      color: var(--foreground);
+    }
+
+    .stage-title {
+      margin: 8px 0 6px;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+
+    .stage-desc {
+      margin: 0;
+      font-size: 13.5px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .spec-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .spec-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: var(--radius-sm);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--foreground);
+    }
+
+    /* 核心入口按钮组（严格对应大厅 -> 赛前配置 / 游戏设置） */
+    .action-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .action-row {
+      display: flex;
+      align-items: stretch;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn-launch {
+      flex: 1;
+      min-width: 190px;
+      height: 46px;
+      padding: 0 18px;
+      border-radius: var(--radius-md);
+      border: none;
+      background: var(--cta);
+      color: var(--cta-fg);
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background-color 160ms ease;
+    }
+
+    .btn-launch:hover {
+      background: var(--cta-hover);
+    }
+
+    .btn-settings {
+      height: 46px;
+      padding: 0 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-strong);
+      background: var(--panel-alt);
+      color: var(--foreground);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background-color 160ms ease, border-color 160ms ease;
+    }
+
+    .btn-settings:hover {
+      background: var(--hover);
+      border-color: var(--primary);
+    }
+
+    .action-hint {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* ==========================================================================
+       7. 下方双面板：当前规则预设快照 + 本游戏玩家键位速览
+       ========================================================================== */
+    .detail-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .sub-panel {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .preset-selector-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .preset-select {
+      height: 30px;
+      padding: 0 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--panel-alt);
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .rules-body {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      flex: 1;
+    }
+
+    .rule-kv-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .rule-kv {
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      min-width: 0;
+    }
+
+    .rule-k {
+      font-size: 11.5px;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+
+    .rule-v {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--foreground);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* 道具/特性小徽章列表 */
+    .items-strip {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .items-strip-label {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .item-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .item-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 6px;
+      font-size: 12px;
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      color: var(--foreground);
+    }
+
+    .item-chip.off {
+      opacity: 0.48;
+      text-decoration: line-through;
+    }
+
+    /* 玩家键位速览面板 */
+    .bindings-body {
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+      flex: 1;
+    }
+
+    .player-bind-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .player-bind-card {
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .player-bind-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .player-identity {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 13.5px;
+    }
+
+    .seat-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 5px;
+      font-weight: 700;
+    }
+
+    .seat-tag.p1 {
+      background: var(--p1-soft);
+      color: var(--p1-color);
+      border: 1px solid color-mix(in srgb, var(--p1-color) 35%, transparent);
+    }
+
+    .seat-tag.p2 {
+      background: var(--p2-soft);
+      color: var(--p2-color);
+      border: 1px solid color-mix(in srgb, var(--p2-color) 35%, transparent);
+    }
+
+    .bind-actions-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .bind-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 24px;
+      padding: 0 6px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--foreground);
+      background: var(--keycap-bg);
+      border: 1px solid var(--keycap-border);
+      border-bottom: 2px solid var(--keycap-shadow);
+      border-radius: 6px;
+      line-height: 1;
+    }
+
+    .shared-esc-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--panel-alt);
+      border: 1px dashed var(--border-strong);
+      font-size: 12px;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }
+
+    /* ==========================================================================
+       8. 底部状态栏与原型跳转反馈浮层
+       ========================================================================== */
+    .site-footer {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 12px 24px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--subtle);
+      border-top: 1px solid var(--border);
+    }
+
+    .shortcut-hints {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .shortcut-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    /* 轻量交互确认弹窗（演示从大厅携带选中游戏上下文进入赛前/设置） */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(8, 11, 18, 0.62);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .dialog-shell {
+      width: 100%;
+      max-width: 500px;
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+    }
+
+    .dialog-head {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .dialog-title {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .dialog-body {
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .payload-pre {
+      margin: 0;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--foreground);
+      overflow-x: auto;
+      line-height: 1.55;
+    }
+
+    .dialog-foot {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      background: var(--panel-alt);
+    }
+
+    /* ==========================================================================
+       9. 窗口响应式断点（适配 1440 / 1280 / 1024 / 900 / 窄窗口）
+       ========================================================================== */
+    @media (max-width: 1160px) {
+      .lobby-shell {
+        grid-template-columns: 330px minmax(0, 1fr);
+      }
+      .stage-hero {
+        grid-template-columns: 1fr;
+      }
+      .arena-preview-wrap {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        min-height: 250px;
+      }
+      .flow-steps {
+        display: none;
+      }
+    }
+
+    @media (max-width: 920px) {
+      .lobby-shell {
+        grid-template-columns: 1fr;
+      }
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .header-inner,
+      .lobby-shell,
+      .site-footer,
+      .proto-bar {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+      .rule-kv-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 设计稿审阅控制栏：方便切换「首版单游戏 / 多游戏扩展」与「默认玩家名 / 自定义玩家资料」 -->
+  <div class="proto-bar" role="region" aria-label="设计稿状态预览栏">
+    <div class="proto-bar-inner">
+      <div class="proto-tag">
+        <span class="proto-dot"></span>
+        <span>设计稿预览 · 游戏大厅视图（docs/design/lobby.html）</span>
+      </div>
+      <div class="proto-controls">
+        <span>注册表数据：</span>
+        <div class="seg-group" role="group" aria-label="游戏注册表规模切换">
+          <button type="button" class="seg-btn active" data-catalog-mode="multi" id="btnCatalogMulti">多游戏扩展示例 (3款)</button>
+          <button type="button" class="seg-btn" data-catalog-mode="single" id="btnCatalogSingle">首版单游戏态 (仅坦克)</button>
+        </div>
+        <span>本地玩家资料：</span>
+        <div class="seg-group" role="group" aria-label="玩家资料状态切换">
+          <button type="button" class="seg-btn active" data-profile-mode="named" id="btnProfileNamed">已命名 (YIXI / PARTIAL)</button>
+          <button type="button" class="seg-btn" data-profile-mode="default" id="btnProfileDefault">首次默认 (P1 / P2)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 平台顶栏 -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24">
+            <rect x="3" y="6" width="7" height="12" rx="2"></rect>
+            <rect x="14" y="6" width="7" height="12" rx="2"></rect>
+            <path d="M10 12h4"></path>
+            <path d="M6.5 10v4"></path>
+            <path d="M17.5 10v4"></path>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title">
+            <span>AI-GAME</span>
+            <span class="brand-badge">本地同屏对战</span>
+          </div>
+          <div class="brand-sub">单机双人共键盘 · 零延迟 60Hz 独立模拟</div>
+        </div>
+      </div>
+
+      <!-- 轻量视图流转提示（对应架构第 2 节） -->
+      <nav class="flow-steps" aria-label="对局流程步骤">
+        <span class="flow-step current">
+          <span class="flow-step-num">01</span>
+          <span>游戏大厅</span>
+        </span>
+        <span aria-hidden="true">→</span>
+        <span class="flow-step">
+          <span class="flow-step-num">02</span>
+          <span>赛前配置</span>
+        </span>
+        <span aria-hidden="true">→</span>
+        <span class="flow-step">
+          <span class="flow-step-num">03</span>
+          <span>同屏对战</span>
+        </span>
+        <span aria-hidden="true">→</span>
+        <span class="flow-step">
+          <span class="flow-step-num">04</span>
+          <span>比赛结算</span>
+        </span>
+      </nav>
+
+      <div class="header-right">
+        <!-- 全站共享玩家位（点击查看说明） -->
+        <button type="button" class="seats-pill" id="btnSeatsInfo" title="查看本机玩家位持久化说明">
+          <span class="seat-chip">
+            <span class="seat-dot" style="background: var(--p1-color);"></span>
+            <span id="headerP1Label">P1 · YIXI</span>
+          </span>
+          <span class="seat-divider" aria-hidden="true"></span>
+          <span class="seat-chip">
+            <span class="seat-dot" style="background: var(--p2-color);"></span>
+            <span id="headerP2Label">P2 · PARTIAL</span>
+          </span>
+        </button>
+
+        <!-- 深浅色主题切换 -->
+        <button type="button" class="icon-btn" id="btnThemeToggle" aria-label="切换深色或浅色主题" title="快捷键 T 切换主题">
+          <svg class="icon icon-sm" id="iconTheme" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+          </svg>
+          <span id="themeLabel">浅色</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 大厅主工作区 -->
+  <main class="lobby-shell">
+    <!-- 左栏：游戏注册表目录 -->
+    <aside class="catalog-column" aria-label="已登记游戏目录">
+      <section class="panel-box">
+        <div class="section-head">
+          <h2 class="section-title">
+            <svg class="icon" viewBox="0 0 24 24">
+              <rect x="3" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+              <rect x="3" y="14" width="7" height="7" rx="1.5"></rect>
+              <rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+            </svg>
+            <span>可玩游戏清单</span>
+          </h2>
+          <span class="count-pill" id="catalogCountPill">3 REGISTERED</span>
+        </div>
+        <div class="catalog-list" id="catalogList" role="listbox" aria-label="选择要进入的游戏">
+          <!-- 由示例 gameCatalog 数据渲染 -->
+        </div>
+      </section>
+
+      <!-- 本机环境与同屏约定说明 -->
+      <section class="panel-box station-card" aria-label="本地同屏运行状态">
+        <div class="station-head">
+          <div class="station-title">
+            <svg class="icon icon-sm" viewBox="0 0 24 24">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg>
+            <span>本机对战就绪状态</span>
+          </div>
+          <span class="storage-ok">localStorage 已同步</span>
+        </div>
+        <ul class="station-list">
+          <li>
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span><strong>配置独立持久化：</strong>玩家资料全站复用；改键与命名规则预设按游戏 ID 独立存储。</span>
+          </li>
+          <li>
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span><strong>比赛快照隔离：</strong>开赛瞬间冻结规则与键位快照，赛中调整设置仅对新比赛生效。</span>
+          </li>
+          <li>
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span><strong>失焦保护：</strong>对战中按 <span class="mono">Esc</span> 或切换浏览器标签页自动冻结模拟时钟。</span>
+          </li>
+        </ul>
+      </section>
+    </aside>
+
+    <!-- 右栏：当前选中游戏展台、规则快照与改键速览 -->
+    <section class="stage-column" aria-live="polite">
+      <!-- 主舞台卡片 -->
+      <div class="panel-box stage-hero">
+        <!-- 战场视觉示意画布 -->
+        <div class="arena-preview-wrap">
+          <div class="arena-top-hud">
+            <span class="hud-score-box">
+              <span style="color: #38bdf8;" id="hudP1Score">YIXI: 4</span>
+              <span style="opacity: 0.4;">|</span>
+              <span style="color: #fb923c;" id="hudP2Score">PARTIAL: 3</span>
+            </span>
+            <span id="arenaTechBadge">60 TPS · CANVAS 2D</span>
+          </div>
+
+          <div class="arena-svg-container" id="arenaPreviewGraphic" role="img" aria-label="当前选中游戏战场示意预览">
+            <!-- 动态注入对应游戏的矢量战术示意图 -->
+          </div>
+
+          <div class="arena-caption">
+            <span id="arenaMapCode" class="mono">MAP #TB-V1-8F3A-12X9</span>
+            <span id="arenaStatusHint">完整地图等比缩放 · 出生点无直线射界</span>
+          </div>
+        </div>
+
+        <!-- 游戏标题、特性与主入口按钮 -->
+        <div class="stage-summary">
+          <div>
+            <div class="stage-eyebrow">
+              <span>当前选中游戏</span>
+              <span class="contract-id" id="stageGameId">tank-battle</span>
+              <span id="stageVersionTag">规则 Schema v1</span>
+            </div>
+            <h1 class="stage-title" id="stageGameTitle">坦克大战</h1>
+            <p class="stage-desc" id="stageGameDesc"></p>
+
+            <div class="spec-pills" id="stageSpecPills">
+              <!-- 动态注入游戏规格标签 -->
+            </div>
+          </div>
+
+          <div class="action-stack">
+            <div class="action-row">
+              <button type="button" class="btn-launch" id="btnEnterPreMatch">
+                <span>进入赛前配置</span>
+                <svg class="icon" viewBox="0 0 24 24">
+                  <path d="M5 12h14"></path>
+                  <path d="m12 5 7 7-7 7"></path>
+                </svg>
+              </button>
+              <button type="button" class="btn-settings" id="btnEnterSettings">
+                <svg class="icon" viewBox="0 0 24 24">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+                <span>规则与改键设置</span>
+              </button>
+            </div>
+            <div class="action-hint">
+              <span>赛前页可修改玩家名、涂装色、按键并校验冲突</span>
+              <span class="mono">快捷键: Enter 赛前 / S 设置</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 下方双栏：当前规则预设摘要 & 本游戏双人键位速览 -->
+      <div class="detail-grid">
+        <!-- 左子面板：当前生效规则与命名预设 -->
+        <section class="panel-box sub-panel" aria-label="当前规则与预设摘要">
+          <div class="section-head">
+            <h3 class="section-title">
+              <svg class="icon icon-sm" viewBox="0 0 24 24">
+                <line x1="4" y1="21" x2="4" y2="14"></line>
+                <line x1="4" y1="10" x2="4" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12" y2="3"></line>
+                <line x1="20" y1="21" x2="20" y2="16"></line>
+                <line x1="20" y1="12" x2="20" y2="3"></line>
+                <line x1="1" y1="14" x2="7" y2="14"></line>
+                <line x1="9" y1="8" x2="15" y2="8"></line>
+                <line x1="17" y1="16" x2="23" y2="16"></line>
+              </svg>
+              <span>下次开局规则摘要</span>
+            </h3>
+            <label class="preset-selector-wrap">
+              <span>命名预设</span>
+              <select class="preset-select" id="presetSelect" aria-label="切换示例命名规则预设"></select>
+            </label>
+          </div>
+
+          <div class="rules-body">
+            <div class="rule-kv-grid" id="ruleKvGrid">
+              <!-- 动态注入当前预设的关键参数 -->
+            </div>
+
+            <div class="items-strip">
+              <div class="items-strip-label">
+                <span id="itemsStripTitle">战场随机道具池</span>
+                <span class="mono" id="itemsEnabledSummary">已启用 7 / 7</span>
+              </div>
+              <div class="item-chips" id="itemChipsContainer">
+                <!-- 动态注入道具启停状态 -->
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 右子面板：当前游戏下的玩家动作与按键映射 -->
+        <section class="panel-box sub-panel" aria-label="当前游戏按键映射速览">
+          <div class="section-head">
+            <h3 class="section-title">
+              <svg class="icon icon-sm" viewBox="0 0 24 24">
+                <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"></path>
+              </svg>
+              <span>本游戏键位映射</span>
+            </h3>
+            <span class="count-pill">KeyboardEvent.code</span>
+          </div>
+
+          <div class="bindings-body">
+            <div class="player-bind-cards" id="playerBindCards">
+              <!-- 动态注入 P1 / P2 在本游戏下的动作映射 -->
+            </div>
+
+            <div class="shared-esc-bar">
+              <span>系统保留键：对战中随时暂停并冻结计时</span>
+              <span><kbd>Esc</kbd> 共用暂停 / 继续</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <!-- 页脚状态与桌面键盘快捷提示 -->
+  <footer class="site-footer">
+    <div>AI-Game 本地同屏对战平台 · 静态站点架构（React + TypeScript + Vite + Canvas 2D）</div>
+    <div class="shortcut-hints">
+      <span class="shortcut-item"><kbd>↑</kbd><kbd>↓</kbd> 切换游戏</span>
+      <span class="shortcut-item"><kbd>Enter</kbd> 进入赛前配置</span>
+      <span class="shortcut-item"><kbd>S</kbd> 打开游戏设置</span>
+      <span class="shortcut-item"><kbd>T</kbd> 深浅主题</span>
+    </div>
+  </footer>
+
+  <!-- 原型流转演示模态框：展示从大厅进入「赛前配置」或「设置」所传递的平台契约上下文 -->
+  <div class="modal-backdrop" id="routeModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="dialog-shell">
+      <div class="dialog-head">
+        <h2 class="dialog-title" id="modalTitle">视图跳转预览</h2>
+        <button type="button" class="icon-btn" id="btnCloseModal" aria-label="关闭弹窗">关闭 (Esc)</button>
+      </div>
+      <div class="dialog-body">
+        <div id="modalDesc">大厅已选定目标游戏，准备挂载对应表单视图。</div>
+        <pre class="payload-pre" id="modalPayload"></pre>
+      </div>
+      <div class="dialog-foot">
+        <button type="button" class="icon-btn" id="btnConfirmModal">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * 示例数据：严格对齐 docs/platform-architecture-plan.md 与 docs/tank-battle-plan.md
+     */
+    const PROFILES = {
+      named: [
+        { seatId: "seat-1", slotLabel: "P1", name: "YIXI", color: "#38bdf8" },
+        { seatId: "seat-2", slotLabel: "P2", name: "PARTIAL", color: "#fb923c" }
+      ],
+      default: [
+        { seatId: "seat-1", slotLabel: "P1", name: "P1", color: "#38bdf8" },
+        { seatId: "seat-2", slotLabel: "P2", name: "P2", color: "#fb923c" }
+      ]
+    };
+
+    const GAME_CATALOG = [
+      {
+        id: "tank-battle",
+        name: "坦克大战",
+        playersText: "2P 同屏",
+        supportedPlayers: [2, 2],
+        schemaVersion: "规则 Schema v1",
+        mapCode: "MAP #TB-V1-8F3A-12X9",
+        techBadge: "60 TPS · CANVAS 2D",
+        statusHint: "完整迷宫等比缩放 · 出生点无直线射界",
+        shortDesc: "迷宫反射弹道与 7 种战术道具同屏博弈，一击必杀，先得 5 分获胜。",
+        fullDesc: "两位玩家共用键盘在随机连通迷宫中驾驶坦克交锋。支持墙面法线反射、贴墙自伤判定、普通弹迎面抵消，以及护盾与单次进攻双槽并存机制。",
+        specs: ["2 人本地同屏", "5 个独立可重绑动作", "墙面弹道反射", "固定 / 随机出生轮换"],
+        iconSvg: `<svg class="icon" viewBox="0 0 24 24"><rect x="4" y="7" width="13" height="10" rx="2"></rect><path d="M17 12h5"></path><path d="M7 7V5h6v2"></path><path d="M7 17v2h6v-2"></path></svg>`,
+        itemsTitle: "战场随机道具池（独立启停与等权抽样）",
+        bindings: {
+          "seat-1": [
+            { label: "行驶 / 转向", keys: ["W", "A", "S", "D"] },
+            { label: "开火 / 单次道具", keys: ["Space"] }
+          ],
+          "seat-2": [
+            { label: "行驶 / 转向", keys: ["↑", "←", "↓", "→"] },
+            { label: "开火 / 单次道具", keys: ["Enter"] }
+          ]
+        },
+        presets: [
+          {
+            id: "default-5pt",
+            name: "标准 5 分局（默认）",
+            kv: [
+              { k: "赛制与倒数", v: "先得 5 分 · 倒数 3s" },
+              { k: "回合限时", v: "关闭（决出单人存活或同归）" },
+              { k: "出生点规则", v: "固定点位 · 每回合互换" },
+              { k: "弹夹与射击", v: "10 发 · 1.0s 回弹 · 0.8s 冷却" },
+              { k: "普通弹抵消", v: "开启（同为普通弹相撞消除）" },
+              { k: "道具刷新", v: "首刷 8s · 间隔 10~16s · 上限 2" }
+            ],
+            items: [
+              { name: "护盾 (30s)", on: true },
+              { name: "连发 (15颗/7s)", on: true },
+              { name: "散弹枪 (3颗耗2发)", on: true },
+              { name: "激光 (6次反射)", on: true },
+              { name: "追踪弹", on: true },
+              { name: "破片弹 (12片)", on: true },
+              { name: "地雷 (0.8s布防)", on: true }
+            ]
+          },
+          {
+            id: "laser-blitz",
+            name: "激光迷宫快节奏",
+            kv: [
+              { k: "赛制与倒数", v: "先得 7 分 · 倒数 2s" },
+              { k: "回合限时", v: "开启（单回合 45 秒）" },
+              { k: "出生点规则", v: "每回合随机合法点位" },
+              { k: "弹夹与射击", v: "12 发 · 0.8s 回弹 · 0.6s 冷却" },
+              { k: "普通弹抵消", v: "开启（同为普通弹相撞消除）" },
+              { k: "道具刷新", v: "首刷 5s · 间隔 6~10s · 上限 3" }
+            ],
+            items: [
+              { name: "护盾 (30s)", on: true },
+              { name: "连发 (15颗/7s)", on: false },
+              { name: "散弹枪 (3颗耗2发)", on: true },
+              { name: "激光 (8次反射)", on: true },
+              { name: "追踪弹", on: false },
+              { name: "破片弹 (12片)", on: true },
+              { name: "地雷 (0.8s布防)", on: true }
+            ]
+          },
+          {
+            id: "pure-duel",
+            name: "纯粹弹道（无道具）",
+            kv: [
+              { k: "赛制与倒数", v: "先得 5 分 · 倒数 3s" },
+              { k: "回合限时", v: "开启（单回合 60 秒）" },
+              { k: "出生点规则", v: "固定点位 · 每回合互换" },
+              { k: "弹夹与射击", v: "6 发 · 1.2s 回弹 · 0.8s 冷却" },
+              { k: "普通弹抵消", v: "关闭（弹丸交叉互穿）" },
+              { k: "道具刷新", v: "全部停用（自动关闭刷新）" }
+            ],
+            items: [
+              { name: "护盾", on: false },
+              { name: "连发", on: false },
+              { name: "散弹枪", on: false },
+              { name: "激光", on: false },
+              { name: "追踪弹", on: false },
+              { name: "破片弹", on: false },
+              { name: "地雷", on: false }
+            ]
+          }
+        ]
+      },
+      {
+        id: "stickman-brawl",
+        name: "火柴人乱斗（扩展示例）",
+        playersText: "2P 同屏",
+        supportedPlayers: [2, 2],
+        schemaVersion: "扩展示例契约 v1",
+        mapCode: "STAGE #SB-ROOFTOP-04",
+        techBadge: "60 TPS · 独立动作映射",
+        statusHint: "复用平台会话宿主与改键冲突校验契约",
+        shortDesc: "架构计划预留扩展玩法示例：双人高低平台格斗、瞬时格挡与击飞淘汰。",
+        fullDesc: "用于演示平台「游戏接入契约」的多游戏扩展效果。火柴人拥有独立于坦克大战的专属动作集合（移动、跳跃、轻击、格挡）与独立规则预设，互不污染本地存储。",
+        specs: ["2 人本地同屏", "6 个独立动作映射", "双槽血量与架势条", "多段地形平台"],
+        iconSvg: `<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"></circle><path d="M12 7.5v6.5"></path><path d="M7 10.5l5-1.5 5 1.5"></path><path d="M8.5 20l3.5-6 3.5 6"></path></svg>`,
+        itemsTitle: "场地机关与空投武器（扩展示例字段）",
+        bindings: {
+          "seat-1": [
+            { label: "移动 / 跳跃", keys: ["A", "D", "W"] },
+            { label: "攻击 / 格挡", keys: ["F", "G"] }
+          ],
+          "seat-2": [
+            { label: "移动 / 跳跃", keys: ["←", "→", "↑"] },
+            { label: "攻击 / 格挡", keys: ["K", "L"] }
+          ]
+        },
+        presets: [
+          {
+            id: "bo3-stock",
+            name: "经典 3 局 2 胜",
+            kv: [
+              { k: "获胜条件", v: "先赢 3 回合 · 每局 100 HP" },
+              { k: "回合限时", v: "90 秒（超时按剩余血量判胜）" },
+              { k: "场地地形", v: "双层浮空擂台 · 边缘可击落" },
+              { k: "精准格挡窗口", v: "0.15 秒（弹反免伤）" },
+              { k: "冲刺冷却", v: "1.2 秒 · 带短暂无敌帧" },
+              { k: "武器空投", v: "每 15 秒随机刷新近战器械" }
+            ],
+            items: [
+              { name: "长棍", on: true },
+              { name: "回旋镖", on: true },
+              { name: "冲击手套", on: true },
+              { name: "震荡手雷", on: true }
+            ]
+          }
+        ]
+      },
+      {
+        id: "grid-interceptors",
+        name: "光轮截击（多人扩展示例）",
+        playersText: "2-4P 同屏",
+        supportedPlayers: [2, 4],
+        schemaVersion: "扩展示例契约 v1",
+        mapCode: "GRID #GI-NEON-64X40",
+        techBadge: "60 TPS · 多席位扩展演示",
+        statusHint: "演示有序玩家列表对 2~4 人输入采样的横向扩展",
+        shortDesc: "演示有序玩家列表（P1~P4）扩展能力：极速直角转向，用光墙封锁对手路径。",
+        fullDesc: "展示架构中「玩家按稳定标识列表组织」的设计弹性。仅需向左/右转与加速三个极简按键，即可在同一键盘上容纳最多 4 名本地玩家同屏竞技。",
+        specs: ["2~4 人弹性席位", "3 键极简操控", "尾迹碰撞围堵", "回合积分制"],
+        iconSvg: `<svg class="icon" viewBox="0 0 24 24"><path d="M4 18V6h8v6h8v6"></path><circle cx="20" cy="18" r="2"></circle><circle cx="4" cy="18" r="2"></circle></svg>`,
+        itemsTitle: "赛道能量模块（扩展示例字段）",
+        bindings: {
+          "seat-1": [
+            { label: "左转 / 右转", keys: ["A", "D"] },
+            { label: "脉冲加速", keys: ["W"] }
+          ],
+          "seat-2": [
+            { label: "左转 / 右转", keys: ["←", "→"] },
+            { label: "脉冲加速", keys: ["↑"] }
+          ]
+        },
+        presets: [
+          {
+            id: "survival-5",
+            name: "极速围堵 5 分制",
+            kv: [
+              { k: "赛制目标", v: "存活最后 1 人得 1 分 · 先 5 分胜" },
+              { k: "转向模式", v: "90° 网格瞬时转向" },
+              { k: "基础航速", v: "14 格/秒 · 加速 22 格/秒" },
+              { k: "尾迹消散", v: "永久保留至本回合结束" },
+              { k: "边界规则", v: "实心边界（触墙淘汰）" },
+              { k: "脉冲充能", v: "每回合 3 次短距跳跃" }
+            ],
+            items: [
+              { name: "相位跃迁", on: true },
+              { name: "尾迹擦除器", on: true },
+              { name: "超频引擎", on: true }
+            ]
+          }
+        ]
+      }
+    ];
+
+    const state = {
+      catalogMode: "multi", // "multi" | "single"
+      profileMode: "named", // "named" | "default"
+      selectedGameId: "tank-battle",
+      selectedPresetIndexByGame: {
+        "tank-battle": 0,
+        "stickman-brawl": 0,
+        "grid-interceptors": 0
+      }
+    };
+
+    function getVisibleGames() {
+      return state.catalogMode === "single"
+        ? GAME_CATALOG.filter((g) => g.id === "tank-battle")
+        : GAME_CATALOG;
+    }
+
+    function getSelectedGame() {
+      const visible = getVisibleGames();
+      return visible.find((g) => g.id === state.selectedGameId) || visible[0];
+    }
+
+    /**
+     * 绘制当前选中游戏的 SVG 战场示意预览（纯内联矢量，离线零依赖）
+     */
+    function renderArenaSvg(game, p1Name, p2Name) {
+      if (game.id === "tank-battle") {
+        return `
+          <svg viewBox="0 0 480 300" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <pattern id="mazeGrid" width="30" height="30" patternUnits="userSpaceOnUse">
+                <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#161d2b" stroke-width="1"/>
+              </pattern>
+            </defs>
+            <rect width="480" height="300" fill="#090d14"/>
+            <rect width="480" height="300" fill="url(#mazeGrid)"/>
+
+            <!-- 迷宫外墙与内部不可破坏墙段 -->
+            <rect x="16" y="16" width="448" height="268" rx="4" fill="none" stroke="#3b475e" stroke-width="6"/>
+            <g stroke="#3b475e" stroke-width="6" stroke-linecap="square">
+              <line x1="110" y1="16" x2="110" y2="105"/>
+              <line x1="110" y1="165" x2="110" y2="230"/>
+              <line x1="195" y1="75" x2="195" y2="215"/>
+              <line x1="195" y1="145" x2="285" y2="145"/>
+              <line x1="290" y1="16" x2="290" y2="92"/>
+              <line x1="365" y1="85" x2="365" y2="225"/>
+              <line x1="275" y1="215" x2="365" y2="215"/>
+            </g>
+
+            <!-- 激光反射弹道示意 -->
+            <polyline points="388,132 461,88 340,19 235,82" fill="none" stroke="#fb923c" stroke-width="2" stroke-dasharray="5 4" opacity="0.88"/>
+            <circle cx="461" cy="88" r="3.5" fill="#fb923c"/>
+            <circle cx="340" cy="19" r="3.5" fill="#fb923c"/>
+
+            <!-- 待拾取道具掉落物（护盾与散弹） -->
+            <g transform="translate(242, 95)">
+              <rect x="-11" y="-11" width="22" height="22" rx="6" fill="#132033" stroke="#38bdf8" stroke-width="1.5"/>
+              <path d="M0 -6 L5 -3.5 V1.5 C5 4.5 0 6.5 0 6.5 C0 6.5 -5 4.5 -5 1.5 V-3.5 Z" fill="none" stroke="#38bdf8" stroke-width="1.5"/>
+            </g>
+            <g transform="translate(152, 244)">
+              <rect x="-11" y="-11" width="22" height="22" rx="6" fill="#261c14" stroke="#f59e0b" stroke-width="1.5"/>
+              <circle cx="-4" cy="0" r="2" fill="#f59e0b"/>
+              <circle cx="0" cy="-3" r="2" fill="#f59e0b"/>
+              <circle cx="4" cy="0" r="2" fill="#f59e0b"/>
+            </g>
+
+            <!-- 已布防地雷 -->
+            <g transform="translate(418, 208)">
+              <circle cx="0" cy="0" r="14" fill="rgba(251, 146, 60, 0.1)" stroke="rgba(251, 146, 60, 0.35)" stroke-dasharray="3 3"/>
+              <circle cx="0" cy="0" r="5" fill="#fb923c"/>
+            </g>
+
+            <!-- P1 坦克（带护盾圈与头顶名字） -->
+            <g transform="translate(64, 136)">
+              <circle cx="0" cy="0" r="24" fill="rgba(56, 189, 248, 0.08)" stroke="#38bdf8" stroke-width="1.6" stroke-dasharray="4 3"/>
+              <g transform="rotate(-18)">
+                <rect x="-13" y="-10" width="26" height="20" rx="4" fill="#0ea5e9" stroke="#bae6fd" stroke-width="1.5"/>
+                <circle cx="0" cy="0" r="5.5" fill="#082f49"/>
+                <line x1="2" y1="0" x2="19" y2="0" stroke="#e0f2fe" stroke-width="4" stroke-linecap="round"/>
+              </g>
+              <text x="0" y="-30" text-anchor="middle" fill="#e2e8f0" font-family="monospace" font-size="11" font-weight="bold">${p1Name}</text>
+            </g>
+
+            <!-- 普通弹迎面飞行 -->
+            <circle cx="142" cy="126" r="3.5" fill="#38bdf8"/>
+            <circle cx="164" cy="126" r="3.5" fill="#fb923c"/>
+
+            <!-- P2 坦克（头顶名字） -->
+            <g transform="translate(408, 144)">
+              <g transform="rotate(150)">
+                <rect x="-13" y="-10" width="26" height="20" rx="4" fill="#ea580c" stroke="#fed7aa" stroke-width="1.5"/>
+                <circle cx="0" cy="0" r="5.5" fill="#431407"/>
+                <line x1="2" y1="0" x2="19" y2="0" stroke="#ffedd5" stroke-width="4" stroke-linecap="round"/>
+              </g>
+              <text x="0" y="-24" text-anchor="middle" fill="#e2e8f0" font-family="monospace" font-size="11" font-weight="bold">${p2Name}</text>
+            </g>
+          </svg>
+        `;
+      }
+
+      if (game.id === "stickman-brawl") {
+        return `
+          <svg viewBox="0 0 480 300" xmlns="http://www.w3.org/2000/svg">
+            <rect width="480" height="300" fill="#090d14"/>
+            <line x1="50" y1="240" x2="430" y2="240" stroke="#3b475e" stroke-width="8" stroke-linecap="round"/>
+            <line x1="100" y1="168" x2="205" y2="168" stroke="#2d384c" stroke-width="6" stroke-linecap="round"/>
+            <line x1="275" y1="168" x2="380" y2="168" stroke="#2d384c" stroke-width="6" stroke-linecap="round"/>
+            <!-- P1 Fighter -->
+            <g transform="translate(195, 195)" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" fill="none">
+              <circle cx="0" cy="-26" r="8" fill="#0c263b"/>
+              <line x1="0" y1="-18" x2="4" y2="12"/>
+              <line x1="2" y1="-8" x2="28" y2="-14"/>
+              <line x1="2" y1="-8" x2="-14" y2="4"/>
+              <line x1="4" y1="12" x2="-12" y2="42"/>
+              <line x1="4" y1="12" x2="18" y2="42"/>
+              <text x="0" y="-42" text-anchor="middle" fill="#38bdf8" stroke="none" font-family="monospace" font-size="11" font-weight="bold">${p1Name}</text>
+            </g>
+            <!-- Clash Spark -->
+            <g transform="translate(240, 178)" stroke="#f59e0b" stroke-width="2">
+              <line x1="-10" y1="-10" x2="10" y2="10"/>
+              <line x1="10" y1="-10" x2="-10" y2="10"/>
+              <circle cx="0" cy="0" r="6" fill="none"/>
+            </g>
+            <!-- P2 Fighter -->
+            <g transform="translate(285, 195)" stroke="#fb923c" stroke-width="3.5" stroke-linecap="round" fill="none">
+              <circle cx="0" cy="-26" r="8" fill="#3b180c"/>
+              <line x1="0" y1="-18" x2="-4" y2="12"/>
+              <line x1="-2" y1="-8" x2="-28" y2="-14"/>
+              <line x1="-2" y1="-8" x2="14" y2="4"/>
+              <line x1="-4" y1="12" x2="-18" y2="42"/>
+              <line x1="-4" y1="12" x2="12" y2="42"/>
+              <text x="0" y="-42" text-anchor="middle" fill="#fb923c" stroke="none" font-family="monospace" font-size="11" font-weight="bold">${p2Name}</text>
+            </g>
+          </svg>
+        `;
+      }
+
+      return `
+        <svg viewBox="0 0 480 300" xmlns="http://www.w3.org/2000/svg">
+          <rect width="480" height="300" fill="#090d14"/>
+          <rect x="24" y="24" width="432" height="252" rx="6" fill="none" stroke="#2f3a4f" stroke-width="4"/>
+          <polyline points="60,220 60,80 260,80 260,180 160,180" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linejoin="round"/>
+          <circle cx="160" cy="180" r="5" fill="#e0f2fe"/>
+          <text x="160" y="166" text-anchor="middle" fill="#38bdf8" font-family="monospace" font-size="11" font-weight="bold">${p1Name}</text>
+          <polyline points="410,70 410,225 215,225 215,125 335,125" fill="none" stroke="#fb923c" stroke-width="4" stroke-linejoin="round"/>
+          <circle cx="335" cy="125" r="5" fill="#ffedd5"/>
+          <text x="335" y="111" text-anchor="middle" fill="#fb923c" font-family="monospace" font-size="11" font-weight="bold">${p2Name}</text>
+        </svg>
+      `;
+    }
+
+    function renderAll() {
+      const visibleGames = getVisibleGames();
+      if (!visibleGames.some((g) => g.id === state.selectedGameId)) {
+        state.selectedGameId = visibleGames[0].id;
+      }
+
+      const selectedGame = getSelectedGame();
+      const profiles = PROFILES[state.profileMode];
+      const p1 = profiles[0];
+      const p2 = profiles[1];
+
+      // 1. 顶栏玩家位更新
+      document.getElementById("headerP1Label").textContent = p1.name === "P1" ? "P1 (默认名)" : `P1 · ${p1.name}`;
+      document.getElementById("headerP2Label").textContent = p2.name === "P2" ? "P2 (默认名)" : `P2 · ${p2.name}`;
+
+      // 2. 左栏游戏目录渲染
+      document.getElementById("catalogCountPill").textContent = `${visibleGames.length} REGISTERED`;
+      const catalogListEl = document.getElementById("catalogList");
+      catalogListEl.innerHTML = visibleGames.map((game) => {
+        const isSelected = game.id === selectedGame.id;
+        const activePreset = game.presets[state.selectedPresetIndexByGame[game.id] || 0];
+        return `
+          <button
+            type="button"
+            role="option"
+            aria-selected="${isSelected}"
+            class="game-card ${isSelected ? "selected" : ""}"
+            data-game-id="${game.id}"
+          >
+            <div class="game-card-top">
+              <div class="game-thumb" aria-hidden="true">${game.iconSvg}</div>
+              <div class="game-card-info">
+                <div class="game-card-title-row">
+                  <span class="game-card-name">${game.name}</span>
+                  <span class="players-tag">${game.playersText}</span>
+                </div>
+                <div class="game-card-id">${game.id}</div>
+              </div>
+            </div>
+            <p class="game-card-desc">${game.shortDesc}</p>
+            <div class="game-card-foot">
+              <span class="preset-mini">预设：${activePreset.name}</span>
+              <span class="active-indicator">${isSelected ? "当前选中" : "点击选择"}</span>
+            </div>
+          </button>
+        `;
+      }).join("");
+
+      catalogListEl.querySelectorAll(".game-card").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.selectedGameId = btn.getAttribute("data-game-id");
+          renderAll();
+        });
+      });
+
+      // 3. 右栏主舞台渲染
+      document.getElementById("hudP1Score").textContent = `${p1.name}: 4`;
+      document.getElementById("hudP2Score").textContent = `${p2.name}: 3`;
+      document.getElementById("arenaTechBadge").textContent = selectedGame.techBadge;
+      document.getElementById("arenaMapCode").textContent = selectedGame.mapCode;
+      document.getElementById("arenaStatusHint").textContent = selectedGame.statusHint;
+      document.getElementById("arenaPreviewGraphic").innerHTML = renderArenaSvg(selectedGame, p1.name, p2.name);
+
+      document.getElementById("stageGameId").textContent = selectedGame.id;
+      document.getElementById("stageVersionTag").textContent = selectedGame.schemaVersion;
+      document.getElementById("stageGameTitle").textContent = selectedGame.name;
+      document.getElementById("stageGameDesc").textContent = selectedGame.fullDesc;
+
+      document.getElementById("stageSpecPills").innerHTML = selectedGame.specs
+        .map((spec) => `<span class="spec-pill">${spec}</span>`)
+        .join("");
+
+      // 4. 命名预设与规则快照渲染
+      const presetIdx = state.selectedPresetIndexByGame[selectedGame.id] || 0;
+      const presetSelectEl = document.getElementById("presetSelect");
+      presetSelectEl.innerHTML = selectedGame.presets
+        .map((p, i) => `<option value="${i}" ${i === presetIdx ? "selected" : ""}>${p.name}</option>`)
+        .join("");
+
+      const activePreset = selectedGame.presets[presetIdx];
+      document.getElementById("ruleKvGrid").innerHTML = activePreset.kv
+        .map((item) => `
+          <div class="rule-kv">
+            <div class="rule-k">${item.k}</div>
+            <div class="rule-v" title="${item.v}">${item.v}</div>
+          </div>
+        `).join("");
+
+      const enabledCount = activePreset.items.filter((i) => i.on).length;
+      document.getElementById("itemsStripTitle").textContent = selectedGame.itemsTitle;
+      document.getElementById("itemsEnabledSummary").textContent = `已启用 ${enabledCount} / ${activePreset.items.length}`;
+      document.getElementById("itemChipsContainer").innerHTML = activePreset.items
+        .map((item) => `<span class="item-chip ${item.on ? "" : "off"}">${item.name}</span>`)
+        .join("");
+
+      // 5. 本游戏双人键位速览渲染
+      const bindCardsEl = document.getElementById("playerBindCards");
+      bindCardsEl.innerHTML = profiles.map((player, idx) => {
+        const seatClass = idx === 0 ? "p1" : "p2";
+        const groups = selectedGame.bindings[player.seatId] || [];
+        return `
+          <div class="player-bind-card">
+            <div class="player-bind-header">
+              <div class="player-identity">
+                <span class="seat-tag ${seatClass}">${player.slotLabel}</span>
+                <span>${player.name}</span>
+              </div>
+              <span class="mono" style="font-size: 11px; color: var(--muted);">${selectedGame.id} + ${player.seatId}</span>
+            </div>
+            <div class="bind-actions-row">
+              ${groups.map((g) => `
+                <span class="bind-group">
+                  <span>${g.label}</span>
+                  <span>${g.keys.map((k) => `<kbd>${k}</kbd>`).join(" ")}</span>
+                </span>
+              `).join("")}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    /**
+     * 演示路由与上下文传递弹窗
+     */
+    function openRoutePreview(targetView) {
+      const selectedGame = getSelectedGame();
+      const presetIdx = state.selectedPresetIndexByGame[selectedGame.id] || 0;
+      const activePreset = selectedGame.presets[presetIdx];
+      const profiles = PROFILES[state.profileMode];
+
+      const modal = document.getElementById("routeModal");
+      const titleEl = document.getElementById("modalTitle");
+      const descEl = document.getElementById("modalDesc");
+      const payloadEl = document.getElementById("modalPayload");
+
+      if (targetView === "pre-match") {
+        titleEl.textContent = `进入「赛前配置」· ${selectedGame.name}`;
+        descEl.textContent = "在正式应用中将切换至赛前配置视图，加载玩家位草稿、校验同色与按键冲突，并在点击开始比赛时冻结不可变快照：";
+      } else if (targetView === "settings") {
+        titleEl.textContent = `进入「游戏设置」· ${selectedGame.name}`;
+        descEl.textContent = "在正式应用中将打开所选游戏的设置表单，复用同一套校验器与持久化接口，支持编辑改键、保存命名预设与分组恢复默认：";
+      } else {
+        titleEl.textContent = "全站玩家位持久化记录";
+        descEl.textContent = "玩家名称与代表色按稳定玩家位 ID（seat-1 / seat-2）保存在 localStorage，跨所有已注册游戏共享：";
+      }
+
+      payloadEl.textContent = JSON.stringify({
+        nextView: targetView,
+        selectedGameId: selectedGame.id,
+        activePresetId: activePreset.id,
+        activePresetName: activePreset.name,
+        players: profiles.map((p) => ({
+          seatId: p.seatId,
+          displayName: p.name,
+          color: p.color
+        }))
+      }, null, 2);
+
+      modal.classList.add("open");
+      document.getElementById("btnConfirmModal").focus();
+    }
+
+    function closeModal() {
+      document.getElementById("routeModal").classList.remove("open");
+    }
+
+    // 绑定控制栏与页面事件
+    document.getElementById("btnCatalogMulti").addEventListener("click", (e) => {
+      state.catalogMode = "multi";
+      e.currentTarget.classList.add("active");
+      document.getElementById("btnCatalogSingle").classList.remove("active");
+      renderAll();
+    });
+
+    document.getElementById("btnCatalogSingle").addEventListener("click", (e) => {
+      state.catalogMode = "single";
+      e.currentTarget.classList.add("active");
+      document.getElementById("btnCatalogMulti").classList.remove("active");
+      renderAll();
+    });
+
+    document.getElementById("btnProfileNamed").addEventListener("click", (e) => {
+      state.profileMode = "named";
+      e.currentTarget.classList.add("active");
+      document.getElementById("btnProfileDefault").classList.remove("active");
+      renderAll();
+    });
+
+    document.getElementById("btnProfileDefault").addEventListener("click", (e) => {
+      state.profileMode = "default";
+      e.currentTarget.classList.add("active");
+      document.getElementById("btnProfileNamed").classList.remove("active");
+      renderAll();
+    });
+
+    document.getElementById("presetSelect").addEventListener("change", (e) => {
+      const game = getSelectedGame();
+      state.selectedPresetIndexByGame[game.id] = Number(e.target.value);
+      renderAll();
+    });
+
+    function toggleTheme() {
+      const root = document.documentElement;
+      const isDark = root.classList.toggle("dark");
+      document.getElementById("themeLabel").textContent = isDark ? "浅色" : "深色";
+    }
+
+    document.getElementById("btnThemeToggle").addEventListener("click", toggleTheme);
+    document.getElementById("btnEnterPreMatch").addEventListener("click", () => openRoutePreview("pre-match"));
+    document.getElementById("btnEnterSettings").addEventListener("click", () => openRoutePreview("settings"));
+    document.getElementById("btnSeatsInfo").addEventListener("click", () => openRoutePreview("player-profiles"));
+    document.getElementById("btnCloseModal").addEventListener("click", closeModal);
+    document.getElementById("btnConfirmModal").addEventListener("click", closeModal);
+    document.getElementById("routeModal").addEventListener("click", (e) => {
+      if (e.target.id === "routeModal") closeModal();
+    });
+
+    // 桌面键盘基准快捷键支持（表单控件聚焦时不拦截）
+    window.addEventListener("keydown", (e) => {
+      const modalOpen = document.getElementById("routeModal").classList.contains("open");
+      if (e.key === "Escape" && modalOpen) {
+        e.preventDefault();
+        closeModal();
+        return;
+      }
+      if (modalOpen) return;
+
+      const tag = document.activeElement ? document.activeElement.tagName : "";
+      if (tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA") return;
+
+      const visible = getVisibleGames();
+      const idx = visible.findIndex((g) => g.id === state.selectedGameId);
+
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const delta = e.key === "ArrowDown" ? 1 : -1;
+        const nextIdx = (idx + delta + visible.length) % visible.length;
+        state.selectedGameId = visible[nextIdx].id;
+        renderAll();
+      } else if (e.key === "Enter" && tag !== "BUTTON") {
+        e.preventDefault();
+        openRoutePreview("pre-match");
+      } else if (e.key === "s" || e.key === "S") {
+        e.preventDefault();
+        openRoutePreview("settings");
+      } else if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        toggleTheme();
+      }
+    });
+
+    renderAll();
+  </script>
+</body>
+</html>
