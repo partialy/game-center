@@ -18,9 +18,18 @@ const KEY_MODE_PREFS = 'local_arena_mode_prefs_v1';
 const KEY_ARENA_SEATS_PREFIX = 'local_arena_brawl_seats_v1_';
 const KEY_MOBILE_PREFS = 'local_arena_mobile_prefs_v1';
 
+export interface FireButtonPosition {
+  /** 在战斗画布区域内的归一化中心 X 坐标 (0.08 ~ 0.94) */
+  xFrac: number;
+  /** 在战斗画布区域内的归一化中心 Y 坐标 (0.18 ~ 0.90) */
+  yFrac: number;
+}
+
 export interface MobilePreferences {
   /** 虚拟摇杆与开火按键透明度百分比（10 ~ 80） */
   virtualControlsOpacity: number;
+  /** 可选自定义开火按钮位置；为 null 时使用默认右下角锚点 */
+  fireButtonPos?: FireButtonPosition | null;
 }
 
 export interface ModePreferences {
@@ -457,19 +466,38 @@ export function clampVirtualControlsOpacity(value: number): number {
   return Math.max(10, Math.min(80, Math.round(value)));
 }
 
+export function clampFireButtonPosition(pos: FireButtonPosition): FireButtonPosition {
+  const xFrac = Number.isFinite(pos.xFrac) ? Math.max(0.08, Math.min(0.94, pos.xFrac)) : 0.9;
+  const yFrac = Number.isFinite(pos.yFrac) ? Math.max(0.18, Math.min(0.9, pos.yFrac)) : 0.8;
+  return {
+    xFrac: Math.round(xFrac * 1000) / 1000,
+    yFrac: Math.round(yFrac * 1000) / 1000,
+  };
+}
+
 export function loadMobilePreferences(
   customStorage?: StorageLike
 ): StoreLoadResult<MobilePreferences> {
-  const defaults: MobilePreferences = { virtualControlsOpacity: 55 };
+  const defaults: MobilePreferences = { virtualControlsOpacity: 55, fireButtonPos: null };
   const res = readJsonRecord(KEY_MOBILE_PREFS, customStorage);
   if (!res.found || res.corrupted || typeof res.data !== 'object' || res.data === null) {
     return { value: defaults, notice: null };
   }
-  const rawOpacity = (res.data as Record<string, unknown>).virtualControlsOpacity;
+  const obj = res.data as Record<string, unknown>;
+  const rawOpacity = obj.virtualControlsOpacity;
   const parsedOpacity =
     typeof rawOpacity === 'number' ? clampVirtualControlsOpacity(rawOpacity) : 55;
+
+  let fireButtonPos: FireButtonPosition | null = null;
+  if (obj.fireButtonPos && typeof obj.fireButtonPos === 'object') {
+    const fp = obj.fireButtonPos as Record<string, unknown>;
+    if (typeof fp.xFrac === 'number' && typeof fp.yFrac === 'number') {
+      fireButtonPos = clampFireButtonPosition({ xFrac: fp.xFrac, yFrac: fp.yFrac });
+    }
+  }
+
   return {
-    value: { virtualControlsOpacity: parsedOpacity },
+    value: { virtualControlsOpacity: parsedOpacity, fireButtonPos },
     notice: null,
   };
 }
@@ -483,6 +511,7 @@ export function saveMobilePreferences(
     {
       version: STORAGE_VERSION,
       virtualControlsOpacity: clampVirtualControlsOpacity(prefs.virtualControlsOpacity),
+      fireButtonPos: prefs.fireButtonPos ? clampFireButtonPosition(prefs.fireButtonPos) : null,
     },
     customStorage
   );

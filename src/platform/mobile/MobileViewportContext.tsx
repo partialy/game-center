@@ -9,9 +9,11 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  clampFireButtonPosition,
   clampVirtualControlsOpacity,
   loadMobilePreferences,
   saveMobilePreferences,
+  type FireButtonPosition,
 } from '../settings/preferencesStore';
 
 export interface MobileDetectionInputs {
@@ -40,14 +42,17 @@ export interface MobileViewportState {
   physicalHeight: number;
   /** 虚拟摇杆与按钮透明度百分比（10 ~ 80） */
   virtualControlsOpacity: number;
+  /** 自定义开火按钮位置；为 null 表示默认右下角 */
+  fireButtonPos: FireButtonPosition | null;
   /** 是否处于浏览器全屏 */
   isFullscreen: boolean;
   /** 是否允许发起全屏横屏请求 */
   canRequestFullscreen: boolean;
   setVirtualControlsOpacity: (opacityPercent: number) => void;
+  setFireButtonPos: (pos: FireButtonPosition | null) => void;
+  /** 将浏览器视口 clientX / clientY 转换为当前逻辑横屏坐标系坐标 */
   requestLandscapeFullscreen: () => Promise<void>;
   exitFullscreen: () => Promise<void>;
-  /** 将浏览器视口 clientX / clientY 转换为当前逻辑横屏坐标系坐标 */
   toLogicalPoint: (clientX: number, clientY: number) => LogicalPoint;
 }
 
@@ -59,9 +64,11 @@ const DEFAULT_STATE: MobileViewportState = {
   physicalWidth: 1280,
   physicalHeight: 720,
   virtualControlsOpacity: 55,
+  fireButtonPos: null,
   isFullscreen: false,
   canRequestFullscreen: false,
   setVirtualControlsOpacity: () => {},
+  setFireButtonPos: () => {},
   requestLandscapeFullscreen: async () => {},
   exitFullscreen: async () => {},
   toLogicalPoint: (clientX, clientY) => ({ x: clientX, y: clientY }),
@@ -147,8 +154,10 @@ export function MobileViewportProvider({ children }: { children: ReactNode }) {
   const [isFullscreen, setIsFullscreen] = useState(() =>
     typeof document !== 'undefined' ? Boolean(document.fullscreenElement) : false
   );
-  const [opacity, setOpacity] = useState<number>(
-    () => loadMobilePreferences().value.virtualControlsOpacity
+  const [initialPrefs] = useState(() => loadMobilePreferences().value);
+  const [opacity, setOpacity] = useState<number>(initialPrefs.virtualControlsOpacity);
+  const [fireButtonPos, setFireButtonPosState] = useState<FireButtonPosition | null>(
+    initialPrefs.fireButtonPos ?? null
   );
 
   useEffect(() => {
@@ -175,11 +184,23 @@ export function MobileViewportProvider({ children }: { children: ReactNode }) {
     void tryLockLandscapeOrientation();
   }, [snap.isMobileOrTablet]);
 
-  const setVirtualControlsOpacity = useCallback((nextPercent: number) => {
-    const clamped = clampVirtualControlsOpacity(nextPercent);
-    setOpacity(clamped);
-    saveMobilePreferences({ virtualControlsOpacity: clamped });
-  }, []);
+  const setVirtualControlsOpacity = useCallback(
+    (nextPercent: number) => {
+      const clamped = clampVirtualControlsOpacity(nextPercent);
+      setOpacity(clamped);
+      saveMobilePreferences({ virtualControlsOpacity: clamped, fireButtonPos });
+    },
+    [fireButtonPos]
+  );
+
+  const setFireButtonPos = useCallback(
+    (pos: FireButtonPosition | null) => {
+      const next = pos ? clampFireButtonPosition(pos) : null;
+      setFireButtonPosState(next);
+      saveMobilePreferences({ virtualControlsOpacity: opacity, fireButtonPos: next });
+    },
+    [opacity]
+  );
 
   const canRequestFullscreen =
     typeof document !== 'undefined' &&
@@ -228,9 +249,11 @@ export function MobileViewportProvider({ children }: { children: ReactNode }) {
       physicalWidth: snap.physicalWidth,
       physicalHeight: snap.physicalHeight,
       virtualControlsOpacity: opacity,
+      fireButtonPos,
       isFullscreen,
       canRequestFullscreen,
       setVirtualControlsOpacity,
+      setFireButtonPos,
       requestLandscapeFullscreen,
       exitFullscreen,
       toLogicalPoint,
@@ -243,9 +266,11 @@ export function MobileViewportProvider({ children }: { children: ReactNode }) {
       logicalWidth,
       logicalHeight,
       opacity,
+      fireButtonPos,
       isFullscreen,
       canRequestFullscreen,
       setVirtualControlsOpacity,
+      setFireButtonPos,
       requestLandscapeFullscreen,
       exitFullscreen,
       toLogicalPoint,
