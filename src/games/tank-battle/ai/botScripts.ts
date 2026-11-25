@@ -1,439 +1,296 @@
-import type {
-  BotActionIntent,
-  BotAgentInstance,
-  BotModelDefinition,
-  PlayerSlotId,
+import {
+  BOSS_TIER_THEME,
+  type BotActionIntent,
+  type BotAgentInstance,
+  type BotModelDefinition,
+  type PlayerSlotId,
 } from '../../../platform/games/contracts';
 import { DeterministicRng } from '../map/rng';
+import type { TankMotionInput } from '../simulation/movement';
 import {
-  CELL_SIZE,
-  TANK_RADIUS,
-  type ItemKind,
   type TankEntity,
   type TankWorldState,
   type Vec2,
 } from '../types';
 import {
-  assessBulletThreat,
-  castMazeWallRay,
-  computeMazePath,
-  convertIntentToActions,
-  findBestRicochetShot,
-  findMazeCellIndex,
-  hasLineOfSight,
-  normalizeAngle,
-  pickPathWaypoint,
-  simulateBounceShot,
-} from './perception';
+  ManeuverMemory,
+  planSafeManeuver,
+  type ManeuverPlanConfig,
+} from './maneuverPlanner';
+import {
+  predictSelfStepState,
+  SIM_STEP_SECONDS,
+  type ShotRejectionReason,
+} from './physicsPrediction';
+import { planTacticalRoute, type RouteGoalKind } from './routePlanner';
+import {
+  decideFinalFireAction,
+  findBestAimSolution,
+  type AimSolution,
+  type ShotSearchConfig,
+} from './shotPlanner';
+import {
+  getSharedStepContext,
+  OpponentMotionTracker,
+} from './threatMap';
 
-interface BotProfileParams {
-  thinkIntervalSeconds: number;
-  aimToleranceRad: number;
-  maxBounceSearch: number;
-  bounceSweepSteps: number;
-  dodgeHorizonSeconds: number;
-  dodgeEnabled: boolean;
-  itemSearchRadiusCells: number;
-  useLeadPrediction: boolean;
-  avoidMines: boolean;
-  hesitationChance: number;
-  fireCooldownFloorSeconds: number;
+/**
+ * 集中定义的 Lv.5 Boss「地狱使者」专属 UI 主题（深紫底 + 暗红标识），
+ * 不占用 8 色玩家坦克涂装色板。
+ */
+export const TANK_BOSS_THEME = {
+  modelId: 'hellbringer',
+  badgeLabel: 'Lv.5 · 地狱使者',
+  shortBadge: 'BOSS · Lv.5',
+  ...BOSS_TIER_THEME,
+} as const;
+
+export interface AiSeatDebugSnapshot {
+  slotId: PlayerSlotId;
+  modelId: string;
+  targetSlotId: PlayerSlotId | null;
+  goalKind: RouteGoalKind;
+  plannedPathCells: number[];
+  fireRejectedReason: ShotRejectionReason;
+  firedThisStep: boolean;
+  isCancelShot: boolean;
+  mostDangerousProjId: number | null;
+  mostDangerousPoint: Vec2 | null;
+  minThreatTtc: number;
+  expectedBounces: number;
+  expectedHitTime: number;
+  candidateCount: number;
+  maxBounceDepth: number;
+  decisionMs: number;
 }
 
-const ITEM_VALUE_PRIORITY: Record<ItemKind, number> = {
-  laser: 95,
-  shield: 90,
-  shotgun: 84,
-  frag: 80,
-  homing: 78,
-  rapid_fire: 74,
-  mine: 52,
+const worldAiDebugMap = new WeakMap<TankWorldState, Record<PlayerSlotId, AiSeatDebugSnapshot>>();
+
+export function getWorldAiDebugSnapshots(
+  world: TankWorldState
+): Record<PlayerSlotId, AiSeatDebugSnapshot> | null {
+  return worldAiDebugMap.get(world) ?? null;
+}
+
+function recordSeatDebugSnapshot(
+  world: TankWorldState,
+  snap: AiSeatDebugSnapshot
+): void {
+  let bag = worldAiDebugMap.get(world);
+  if (!bag) {
+    bag = {};
+    worldAiDebugMap.set(world, bag);
+  }
+  bag[snap.slotId] = snap;
+}
+
+interface TankTierProfile {
+  modelId: string;
+  thinkIntervalSeconds: number;
+  hesitationChance: number;
+  fireCooldownFloorSeconds: number;
+  routeRiskWeight: number;
+  itemSearchMaxSteps: number;
+  coverReloadEnabled: boolean;
+  multiTargetScoring: boolean;
+  shot: ShotSearchConfig;
+  maneuver: ManeuverPlanConfig;
+}
+
+const EMPTY_INTENT: BotActionIntent = {
+  forward: false,
+  backward: false,
+  turnLeft: false,
+  turnRight: false,
+  fire: false,
 };
 
 /**
- * 通用可配置坦克 AI 决策体（由不同难度的 TS 脚本参数驱动，完全遵守物理公平规则）。
+ * 统一五档坦克内置 AI 决策体：
+ * - 完全基于当前公开场态与同源物理预测规划动作
+ * - 仅提交标准 5 键按下状态，由物理引擎在同一步结算
  */
-class ConfigurableTankBotAgent implements BotAgentInstance<TankWorldState> {
-  private readonly params: BotProfileParams;
+class TacticalTankBotAgent implements BotAgentInstance<TankWorldState> {
+  private readonly profile: TankTierProfile;
   private readonly rng: DeterministicRng;
+  private readonly opponentTracker = new OpponentMotionTracker();
+  private readonly maneuverMemory = new ManeuverMemory();
 
   private lastRound = -1;
-  private thinkTimer = 0;
-  private cachedMoveDir: Vec2 | null = null;
-  private cachedAimAngle: number | null = null;
-  private cachedShouldFire = false;
+  private routeTimer = 0;
+  private cachedRoute: ReturnType<typeof planTacticalRoute> | null = null;
+  private cachedAim: AimSolution | null = null;
+  private cachedMoveInput: TankMotionInput | null = null;
+  private cachedManeuverSafety: ReturnType<typeof planSafeManeuver>['safety'] | null = null;
+  private cachedAllLethal = false;
+  private cachedCandidateCount = 0;
+  private prevFireHeld = false;
   private lastFireAt = -10;
-  private lastPosX = 0;
-  private lastPosY = 0;
-  private stuckTimer = 0;
-  private unstickTimer = 0;
-  private unstickDir: Vec2 = { x: 1, y: 0 };
-  private prevEnemyX = 0;
-  private prevEnemyY = 0;
-  private enemyVx = 0;
-  private enemyVy = 0;
-  private hasEnemySample = false;
-  private lastTargetSlotId: PlayerSlotId | null = null;
+  private hesitationCooldown = 0;
 
-  constructor(params: BotProfileParams, seed: number) {
-    this.params = params;
+  constructor(profile: TankTierProfile, seed: number) {
+    this.profile = profile;
     this.rng = new DeterministicRng(seed);
   }
 
   decide(world: TankWorldState, selfSlotId: PlayerSlotId, dtSeconds: number): BotActionIntent {
-    const empty: BotActionIntent = {
-      forward: false,
-      backward: false,
-      turnLeft: false,
-      turnRight: false,
-      fire: false,
-    };
-
     if (world.phase !== 'playing') {
-      return empty;
+      this.prevFireHeld = false;
+      return { ...EMPTY_INTENT };
     }
 
     const self = world.tanks.find((t) => t.slotId === selfSlotId);
     if (!self || !self.alive) {
-      return empty;
+      this.prevFireHeld = false;
+      return { ...EMPTY_INTENT };
     }
 
-    // 多人/多 AI 混战中动态选择最近且优先直视可见的存活对手
-    let enemy: TankEntity | null = null;
-    let bestTargetScore = Infinity;
-    for (let i = 0; i < world.tanks.length; i += 1) {
-      const cand = world.tanks[i];
-      if (!cand.alive || cand.slotId === selfSlotId) continue;
-      const dist = Math.hypot(cand.x - self.x, cand.y - self.y);
-      const visible = hasLineOfSight(world.maze, self.x, self.y, cand.x, cand.y);
-      const score = dist - (visible ? 180 : 0);
-      if (score < bestTargetScore) {
-        bestTargetScore = score;
-        enemy = cand;
-      }
-    }
-    if (!enemy) {
-      return empty;
-    }
+    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
-    // 新回合重置内部记忆
     if (this.lastRound !== world.roundNumber) {
       this.lastRound = world.roundNumber;
-      this.thinkTimer = 0;
-      this.cachedMoveDir = null;
-      this.cachedAimAngle = null;
-      this.cachedShouldFire = false;
+      this.routeTimer = 0;
+      this.cachedRoute = null;
+      this.cachedAim = null;
+      this.cachedMoveInput = null;
+      this.cachedManeuverSafety = null;
+      this.cachedAllLethal = false;
+      this.cachedCandidateCount = 0;
+      this.prevFireHeld = false;
       this.lastFireAt = -10;
-      this.lastPosX = self.x;
-      this.lastPosY = self.y;
-      this.stuckTimer = 0;
-      this.unstickTimer = 0;
-      this.hasEnemySample = false;
-      this.lastTargetSlotId = null;
+      this.hesitationCooldown = 0;
+      this.opponentTracker.reset();
+      this.maneuverMemory.reset();
     }
 
-    // 切换锁定的对手时重置瞬时速度采样，避免速度跳变导致提前量偏航
-    if (this.lastTargetSlotId !== enemy.slotId) {
-      this.lastTargetSlotId = enemy.slotId;
-      this.enemyVx = 0;
-      this.enemyVy = 0;
-      this.hasEnemySample = false;
+    const stepDt = dtSeconds > 0 ? dtSeconds : SIM_STEP_SECONDS;
+    const shared = getSharedStepContext(world);
+    const opponents = this.opponentTracker.update(world);
+    const livingEnemies = opponents.filter((o) => o.alive && o.slotId !== selfSlotId);
+
+    if (livingEnemies.length === 0) {
+      this.prevFireHeld = false;
+      return { ...EMPTY_INTENT };
     }
 
-    // 追踪敌方瞬时速度用于提前量预判
-    if (this.hasEnemySample && dtSeconds > 0.001) {
-      const ivx = (enemy.x - this.prevEnemyX) / dtSeconds;
-      const ivy = (enemy.y - this.prevEnemyY) / dtSeconds;
-      this.enemyVx = this.enemyVx * 0.7 + ivx * 0.3;
-      this.enemyVy = this.enemyVy * 0.7 + ivy * 0.3;
+    // 1. 低阶（Lv.1/Lv.2）保留有限犹豫；Lv.3～5 绝对零犹豫
+    if (this.hesitationCooldown > 0) {
+      this.hesitationCooldown = Math.max(0, this.hesitationCooldown - stepDt);
+      this.prevFireHeld = false;
+      return { ...EMPTY_INTENT };
     }
-    this.prevEnemyX = enemy.x;
-    this.prevEnemyY = enemy.y;
-    this.hasEnemySample = true;
-
-    // 防卡墙检测
-    const movedSinceLast = Math.hypot(self.x - this.lastPosX, self.y - this.lastPosY);
-    this.lastPosX = self.x;
-    this.lastPosY = self.y;
-    if (this.cachedMoveDir && movedSinceLast < 14 * dtSeconds) {
-      this.stuckTimer += dtSeconds;
-    } else {
-      this.stuckTimer = Math.max(0, this.stuckTimer - dtSeconds * 2);
-    }
-
-    if (this.unstickTimer > 0) {
-      this.unstickTimer = Math.max(0, this.unstickTimer - dtSeconds);
-    } else if (this.stuckTimer > 0.45) {
-      this.stuckTimer = 0;
-      this.unstickTimer = 0.35;
-      const escapeAngle = self.angle + (this.rng.next() > 0.5 ? Math.PI * 0.65 : -Math.PI * 0.65);
-      this.unstickDir = { x: Math.cos(escapeAngle), y: Math.sin(escapeAngle) };
-    }
-
-    // 紧急弹幕闪避高于节拍节流，确保高阶 AI 拥有毫秒级避弹手感
-    if (this.params.dodgeEnabled) {
-      const threat = assessBulletThreat(
-        self,
-        world.projectiles,
-        world.maze,
-        this.params.dodgeHorizonSeconds
-      );
-      if (threat.urgent) {
-        return convertIntentToActions(
-          self,
-          { x: threat.evadeX, y: threat.evadeY },
-          null,
-          false,
-          world.rules.controlMode
-        );
-      }
-    }
-
-    this.thinkTimer -= dtSeconds;
-    if (this.thinkTimer <= 0) {
-      this.thinkTimer = this.params.thinkIntervalSeconds;
-      this.recomputeTacticalPlan(world, self, enemy);
-    }
-
-    // 实时开火门控：确保只在炮口精确对准安全角度且弹药/冷却允许时扣动扳机
-    let fireNow = false;
     if (
-      this.cachedShouldFire &&
-      this.cachedAimAngle !== null &&
-      world.battleTime - this.lastFireAt >= this.params.fireCooldownFloorSeconds
+      this.profile.hesitationChance > 0 &&
+      this.routeTimer <= 0 &&
+      this.rng.next() < this.profile.hesitationChance
     ) {
-      const aimErr = Math.abs(normalizeAngle(this.cachedAimAngle - self.angle));
-      const canShootAmmo =
-        self.offense?.kind === 'laser' ||
-        self.offense?.kind === 'homing' ||
-        self.offense?.kind === 'frag' ||
-        self.offense?.kind === 'mine' ||
-        (self.offense?.kind === 'shotgun'
-          ? self.ammo >= world.rules.shotgunAmmoCost
-          : self.ammo >= 1);
-
-      if (aimErr <= this.params.aimToleranceRad && canShootAmmo) {
-        // 开火前二次贴墙自毁安全校验（非地雷）
-        const isMine = self.offense?.kind === 'mine';
-        if (isMine) {
-          fireNow = true;
-          this.lastFireAt = world.battleTime;
-          this.cachedShouldFire = false;
-        } else {
-          const muzzleWall = castMazeWallRay(
-            world.maze,
-            self.x,
-            self.y,
-            Math.cos(self.angle),
-            Math.sin(self.angle),
-            TANK_RADIUS + 18
-          );
-          if (!muzzleWall) {
-            fireNow = true;
-            this.lastFireAt = world.battleTime;
-            // 单发点射后在下一个思考节拍重新确认，避免无脑倾泻空弹夹
-            if (self.offense?.kind !== 'rapid_fire') {
-              this.cachedShouldFire = false;
-            }
-          }
-        }
-      }
+      this.hesitationCooldown = 0.14;
+      this.routeTimer = this.profile.thinkIntervalSeconds;
+      this.prevFireHeld = false;
+      return { ...EMPTY_INTENT };
     }
 
-    const activeMove = this.unstickTimer > 0 ? this.unstickDir : this.cachedMoveDir;
-    // 处于脱困期间暂停瞄准锁死，优先摆脱墙角
-    const activeAim = this.unstickTimer > 0 ? null : this.cachedAimAngle;
+    // 2. 路径、瞄准与反应节奏节拍（Lv.5 thinkIntervalSeconds=0 保持 60Hz 全帧重算；低档按对应反应节奏刷新）
+    this.routeTimer -= stepDt;
+    const shouldThinkNow = !this.cachedRoute || !this.cachedAim || !this.cachedMoveInput || this.routeTimer <= 0;
+    if (shouldThinkNow) {
+      this.routeTimer = this.profile.thinkIntervalSeconds;
+      this.cachedRoute = planTacticalRoute(world, shared, self, opponents, {
+        riskWeight: this.profile.routeRiskWeight,
+        maxBounceThreat: this.profile.maneuver.maxBounceThreat,
+        itemSearchMaxSteps: this.profile.itemSearchMaxSteps,
+        coverReloadEnabled: this.profile.coverReloadEnabled,
+        multiTargetScoring: this.profile.multiTargetScoring,
+      });
+      this.cachedAim = findBestAimSolution(world, shared, self, opponents, this.profile.shot);
 
-    return convertIntentToActions(
-      self,
-      activeMove,
-      activeAim,
-      fireNow,
-      world.rules.controlMode
-    );
-  }
-
-  private recomputeTacticalPlan(
-    world: TankWorldState,
-    self: TankEntity,
-    enemy: TankEntity
-  ): void {
-    const maze = world.maze;
-    const distToEnemy = Math.hypot(enemy.x - self.x, enemy.y - self.y);
-
-    // 1. 新兵等低阶难度保留轻微“犹豫/发呆”人性化特征
-    if (this.params.hesitationChance > 0 && this.rng.next() < this.params.hesitationChance) {
-      this.cachedMoveDir = null;
-      this.cachedAimAngle = null;
-      this.cachedShouldFire = false;
-      return;
-    }
-
-    // 2. 特殊进攻武器处理：地雷在合适路口或敌方接近路径时自动布放
-    if (self.offense?.kind === 'mine') {
-      const selfCell = findMazeCellIndex(maze, self.x, self.y);
-      const isChokeOrMid = maze.cells[selfCell].neighbors.length <= 2 || distToEnemy < 320;
-      if (isChokeOrMid && distToEnemy > 95) {
-        this.cachedAimAngle = self.angle;
-        this.cachedShouldFire = true;
-      }
-    }
-
-    // 3. 寻找射击解（直视提前量 / 激光多折线 / 墙面反弹狙击）
-    let bestAim: number | null = null;
-    let wantsFire = false;
-
-    const hasDirectSight = hasLineOfSight(maze, self.x, self.y, enemy.x, enemy.y);
-
-    // 追踪弹无需严苛直视，中远距离且前方开阔即可释放
-    if (self.offense?.kind === 'homing' && distToEnemy > 130) {
-      const openFront = !castMazeWallRay(
-        maze,
-        self.x,
-        self.y,
-        Math.cos(self.angle),
-        Math.sin(self.angle),
-        48
-      );
-      if (openFront) {
-        bestAim = self.angle;
-        wantsFire = true;
-      }
-    }
-
-    if (!wantsFire && hasDirectSight) {
-      // 提前量预判：按子弹飞行时间修正瞄准点
-      let targetX = enemy.x;
-      let targetY = enemy.y;
-      if (this.params.useLeadPrediction && self.offense?.kind !== 'laser') {
-        const bulletSpeed = Math.max(180, world.rules.normalBulletSpeed);
-        const flightTime = Math.min(0.45, distToEnemy / bulletSpeed);
-        const predX = enemy.x + this.enemyVx * flightTime * 0.55;
-        const predY = enemy.y + this.enemyVy * flightTime * 0.55;
-        if (hasLineOfSight(maze, self.x, self.y, predX, predY)) {
-          targetX = predX;
-          targetY = predY;
-        }
-      }
-
-      const aimRad = Math.atan2(targetY - self.y, targetX - self.x);
-      const safeCheck = simulateBounceShot(maze, self, enemy, aimRad, 0, distToEnemy + 60);
-      if (!safeCheck.selfRisk) {
-        bestAim = aimRad;
-        // 散弹枪偏爱中近距离，破片弹避免过近自伤
-        if (self.offense?.kind === 'frag' && distToEnemy < 135) {
-          wantsFire = false;
-        } else {
-          wantsFire = true;
-        }
-      }
-    }
-
-    // 若被墙体遮挡且该难度支持反弹求解，搜索 1~2 次墙面反弹击杀角度
-    if (!wantsFire && this.params.maxBounceSearch > 0 && distToEnemy < 620) {
-      const bounceLimit =
-        self.offense?.kind === 'laser'
-          ? Math.min(world.rules.laserMaxBounces, this.params.maxBounceSearch + 1)
-          : this.params.maxBounceSearch;
-      const bounceSol = findBestRicochetShot(
-        maze,
+      const maneuver = planSafeManeuver(
+        world,
+        shared,
         self,
-        enemy,
-        bounceLimit,
-        this.params.bounceSweepSteps
+        opponents,
+        this.cachedRoute,
+        this.cachedAim,
+        this.maneuverMemory,
+        this.profile.maneuver,
+        stepDt
       );
-      if (bounceSol) {
-        bestAim = bounceSol.angle;
-        wantsFire = true;
-      }
+      this.cachedMoveInput = maneuver.moveInput;
+      this.cachedManeuverSafety = maneuver.safety;
+      this.cachedAllLethal = maneuver.allCandidatesLethal;
+      this.cachedCandidateCount = maneuver.candidateCount;
     }
 
-    // 4. 移动目标选择：评估争夺场上道具 vs 追击/风筝敌方坦克
-    const selfCell = findMazeCellIndex(maze, self.x, self.y);
-    const enemyCell = findMazeCellIndex(maze, enemy.x, enemy.y);
+    const routePlan = this.cachedRoute!;
+    const aimSolution = this.cachedAim!;
+    const moveInput: TankMotionInput = this.cachedMoveInput!;
+    const maneuverSafety = this.cachedManeuverSafety!;
 
-    let goalCell = enemyCell;
-    let goalPoint: Vec2 = { x: enemy.x, y: enemy.y };
-    let chasingDrop = false;
+    // 5. 基于预计本步移动及拾取后的真实状态，执行最终开火安全门控
+    const postMoveState = predictSelfStepState(world, self, moveInput, stepDt);
+    const floorBlocked =
+      this.profile.fireCooldownFloorSeconds > 0 &&
+      world.battleTime - this.lastFireAt < this.profile.fireCooldownFloorSeconds;
 
-    if (this.params.itemSearchRadiusCells > 0 && world.drops.length > 0) {
-      let bestDropScore = -Infinity;
-      for (const drop of world.drops) {
-        // 若已有护盾不再优先抢护盾，已有高价值武器不再抢低价值武器
-        if (drop.kind === 'shield' && self.shield) continue;
-        if (drop.kind !== 'shield' && self.offense && ITEM_VALUE_PRIORITY[drop.kind] <= ITEM_VALUE_PRIORITY[self.offense.kind]) {
-          continue;
-        }
-        const pathToDrop = computeMazePath(maze, selfCell, drop.cellIndex);
-        const steps = Math.max(0, pathToDrop.length - 1);
-        if (steps > this.params.itemSearchRadiusCells) continue;
-        const score = ITEM_VALUE_PRIORITY[drop.kind] - steps * 14;
-        if (score > bestDropScore) {
-          bestDropScore = score;
-          goalCell = drop.cellIndex;
-          goalPoint = { x: drop.x, y: drop.y };
-          chasingDrop = true;
-        }
-      }
+    let shouldFire = false;
+    let rejectionReason: ShotRejectionReason = floorBlocked ? 'cooldown' : 'ok';
+    let isCancelShot = false;
+
+    if (!floorBlocked) {
+      const fireDecision = decideFinalFireAction(
+        world,
+        self,
+        postMoveState,
+        aimSolution,
+        opponents,
+        this.prevFireHeld,
+        this.profile.shot,
+        this.cachedAllLethal
+      );
+      shouldFire = fireDecision.shouldFire;
+      rejectionReason = fireDecision.rejectionReason;
+      isCancelShot = fireDecision.isCancelShot;
     }
 
-    const path = computeMazePath(maze, selfCell, goalCell);
-    let moveVec: Vec2 | null = null;
-
-    if (!chasingDrop && hasDirectSight && distToEnemy < 155) {
-      // 贴脸直视交火时适当拉开身位或侧向走位，避免互相撞死或贴墙
-      const awayAngle = Math.atan2(self.y - enemy.y, self.x - enemy.x);
-      const strafeAngle = awayAngle + (this.rng.next() > 0.5 ? 0.65 : -0.65);
-      moveVec = { x: Math.cos(strafeAngle), y: Math.sin(strafeAngle) };
-    } else if (path.length >= 2) {
-      const wp = pickPathWaypoint(maze, self, path, goalPoint);
-      const dx = wp.x - self.x;
-      const dy = wp.y - self.y;
-      const len = Math.hypot(dx, dy);
-      if (len > 8) {
-        moveVec = { x: dx / len, y: dy / len };
-      }
-    } else {
-      const dx = goalPoint.x - self.x;
-      const dy = goalPoint.y - self.y;
-      const len = Math.hypot(dx, dy);
-      if (len > 26) {
-        moveVec = { x: dx / len, y: dy / len };
-      }
+    if (shouldFire) {
+      this.lastFireAt = world.battleTime;
     }
+    this.prevFireHeld = shouldFire;
 
-    // 5. 高阶 AI 主动绕开敌方已就绪的可见地雷（仅在非常近的警戒圈内感知，维持公平感）
-    if (this.params.avoidMines && moveVec && world.mines.length > 0) {
-      let mvX = moveVec.x;
-      let mvY = moveVec.y;
-      for (const mine of world.mines) {
-        if (mine.ownerSlotId === self.slotId) continue;
-        const dMine = Math.hypot(self.x - mine.x, self.y - mine.y);
-        if (dMine < CELL_SIZE * 0.95) {
-          const pushX = (self.x - mine.x) / Math.max(1, dMine);
-          const pushY = (self.y - mine.y) / Math.max(1, dMine);
-          const bx = mvX + pushX * 1.4;
-          const by = mvY + pushY * 1.4;
-          const bl = Math.hypot(bx, by) || 1;
-          mvX = bx / bl;
-          mvY = by / bl;
-        }
-      }
-      moveVec = { x: mvX, y: mvY };
-    }
+    const decisionMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
 
-    this.cachedMoveDir = moveVec;
-    this.cachedAimAngle = bestAim;
-    this.cachedShouldFire = wantsFire;
+    recordSeatDebugSnapshot(world, {
+      slotId: selfSlotId,
+      modelId: this.profile.modelId,
+      targetSlotId: aimSolution.targetSlotId ?? routePlan.targetSlotId,
+      goalKind: routePlan.goalKind,
+      plannedPathCells: routePlan.cellPath,
+      fireRejectedReason: rejectionReason,
+      firedThisStep: shouldFire,
+      isCancelShot,
+      mostDangerousProjId: maneuverSafety.mostDangerousProjId,
+      mostDangerousPoint: maneuverSafety.mostDangerousPoint,
+      minThreatTtc: maneuverSafety.minTtc,
+      expectedBounces: aimSolution.expectedBounces,
+      expectedHitTime: aimSolution.expectedHitTime,
+      candidateCount: this.cachedCandidateCount,
+      maxBounceDepth: this.profile.shot.maxBounceSearch,
+      decisionMs,
+    });
+
+    return {
+      forward: moveInput.forward,
+      backward: moveInput.backward,
+      turnLeft: moveInput.turnLeft,
+      turnRight: moveInput.turnRight,
+      fire: shouldFire,
+    };
   }
 }
 
 /**
- * 四档不同智力的 TypeScript AI 对手策略脚本注册表：
- * 1. 新兵巡逻（入门）
- * 2. 战术游击（进阶）
- * 3. 精英猎手（高手）
- * 4. 噩梦反弹（大师）
+ * 五档内置 TypeScript AI 策略模型注册表：
+ * Lv.1 新兵巡逻 -> Lv.2 战术游击（默认）-> Lv.3 精英猎手 -> Lv.4 噩梦反弹 -> Lv.5 地狱使者（Boss）
  */
 export const TANK_BOT_MODELS: BotModelDefinition<TankWorldState>[] = [
   {
@@ -442,27 +299,43 @@ export const TANK_BOT_MODELS: BotModelDefinition<TankWorldState>[] = [
     difficultyLevel: 1,
     difficultyLabel: '入门',
     accentColor: '#1F8A5B',
-    summary: '节奏舒缓的巡逻脚本：仅直视开火、不主动躲避弹幕，适合单人上手与练枪热身。',
+    summary: '节奏平缓的巡逻 AI：直射为主、保留轻微犹豫，具备基础防贴墙自伤、避让己雷与简单撤离能力。',
     traits: {
-      navigation: 2,
+      navigation: 1,
       dodging: 1,
-      aiming: 2,
+      aiming: 1,
       items: 1,
     },
     createAgent: (seed) =>
-      new ConfigurableTankBotAgent(
+      new TacticalTankBotAgent(
         {
-          thinkIntervalSeconds: 0.3,
-          aimToleranceRad: 0.26,
-          maxBounceSearch: 0,
-          bounceSweepSteps: 0,
-          dodgeHorizonSeconds: 0,
-          dodgeEnabled: false,
-          itemSearchRadiusCells: 1,
-          useLeadPrediction: false,
-          avoidMines: false,
-          hesitationChance: 0.16,
-          fireCooldownFloorSeconds: 0.55,
+          modelId: 'rookie',
+          thinkIntervalSeconds: 0.24,
+          hesitationChance: 0.14,
+          fireCooldownFloorSeconds: 0.45,
+          routeRiskWeight: 0.15,
+          itemSearchMaxSteps: 1,
+          coverReloadEnabled: false,
+          multiTargetScoring: false,
+          shot: {
+            maxBounceSearch: 0,
+            sweepAngles: 0,
+            useLeadPrediction: false,
+            useMirrorReflections: false,
+            useCancelDefense: false,
+            aimToleranceRad: 0.24,
+            maxShotDist: 520,
+            sealExitsEnabled: false,
+          },
+          maneuver: {
+            lookaheadSteps: 10,
+            twoStageBranching: false,
+            maxBounceThreat: 0,
+            includePost5thTail: false,
+            checkGunlines: false,
+            aimWhileMovingWeight: 0.25,
+            enableImmediateHitCapture: false,
+          },
         },
         seed
       ),
@@ -473,27 +346,43 @@ export const TANK_BOT_MODELS: BotModelDefinition<TankWorldState>[] = [
     difficultyLevel: 2,
     difficultyLabel: '进阶',
     accentColor: '#2364C7',
-    summary: '均衡型迷宫脚本：具备最短路追踪、直视提前量射击、基础躲弹与近点道具拾取。',
+    summary: '均衡型迷宫 AI：风险加权 Dijkstra 寻路、直飞弹幕多方向避让、近点道具争夺与回掩体补弹。',
     traits: {
-      navigation: 3,
+      navigation: 2,
       dodging: 3,
-      aiming: 3,
-      items: 3,
+      aiming: 2,
+      items: 2,
     },
     createAgent: (seed) =>
-      new ConfigurableTankBotAgent(
+      new TacticalTankBotAgent(
         {
-          thinkIntervalSeconds: 0.16,
-          aimToleranceRad: 0.17,
-          maxBounceSearch: 0,
-          bounceSweepSteps: 0,
-          dodgeHorizonSeconds: 0.55,
-          dodgeEnabled: true,
-          itemSearchRadiusCells: 3,
-          useLeadPrediction: true,
-          avoidMines: false,
-          hesitationChance: 0.04,
-          fireCooldownFloorSeconds: 0.34,
+          modelId: 'tactical',
+          thinkIntervalSeconds: 0.2,
+          hesitationChance: 0.05,
+          fireCooldownFloorSeconds: 0.32,
+          routeRiskWeight: 0.65,
+          itemSearchMaxSteps: 3,
+          coverReloadEnabled: true,
+          multiTargetScoring: false,
+          shot: {
+            maxBounceSearch: 0,
+            sweepAngles: 0,
+            useLeadPrediction: true,
+            useMirrorReflections: false,
+            useCancelDefense: false,
+            aimToleranceRad: 0.17,
+            maxShotDist: 620,
+            sealExitsEnabled: false,
+          },
+          maneuver: {
+            lookaheadSteps: 12,
+            twoStageBranching: false,
+            maxBounceThreat: 0,
+            includePost5thTail: false,
+            checkGunlines: false,
+            aimWhileMovingWeight: 0.35,
+            enableImmediateHitCapture: false,
+          },
         },
         seed
       ),
@@ -504,27 +393,44 @@ export const TANK_BOT_MODELS: BotModelDefinition<TankWorldState>[] = [
     difficultyLevel: 3,
     difficultyLabel: '高手',
     accentColor: '#D97706',
-    summary: '进攻型高手脚本：优先争夺高价值道具、主动预判闪避来袭弹道，并善用 1 次墙面反弹偷袭。',
+    summary: '进攻型高手 AI：预判 1 次墙面反弹弹幕、掩体探头反打、1 次反弹狙击并主动执行道具专项走位。',
     traits: {
-      navigation: 4,
-      dodging: 4,
-      aiming: 4,
-      items: 5,
+      navigation: 3,
+      dodging: 3,
+      aiming: 3,
+      items: 4,
     },
     createAgent: (seed) =>
-      new ConfigurableTankBotAgent(
+      new TacticalTankBotAgent(
         {
-          thinkIntervalSeconds: 0.09,
-          aimToleranceRad: 0.12,
-          maxBounceSearch: 1,
-          bounceSweepSteps: 28,
-          dodgeHorizonSeconds: 0.78,
-          dodgeEnabled: true,
-          itemSearchRadiusCells: 5,
-          useLeadPrediction: true,
-          avoidMines: true,
+          modelId: 'elite',
+          thinkIntervalSeconds: 0.14,
           hesitationChance: 0,
           fireCooldownFloorSeconds: 0.24,
+          routeRiskWeight: 0.85,
+          itemSearchMaxSteps: 5,
+          coverReloadEnabled: true,
+          multiTargetScoring: true,
+          shot: {
+            maxBounceSearch: 1,
+            sweepAngles: 24,
+            useLeadPrediction: true,
+            useMirrorReflections: true,
+            useCancelDefense: false,
+            aimToleranceRad: 0.15,
+            maxShotDist: 620,
+            maxNormalHitTimeSeconds: 0.95,
+            sealExitsEnabled: false,
+          },
+          maneuver: {
+            lookaheadSteps: 14,
+            twoStageBranching: false,
+            maxBounceThreat: 1,
+            includePost5thTail: false,
+            checkGunlines: false,
+            aimWhileMovingWeight: 0.4,
+            enableImmediateHitCapture: false,
+          },
         },
         seed
       ),
@@ -535,7 +441,56 @@ export const TANK_BOT_MODELS: BotModelDefinition<TankWorldState>[] = [
     difficultyLevel: 4,
     difficultyLabel: '大师',
     accentColor: '#D9432B',
-    summary: '极限战术脚本：毫秒级弹幕躲避 + 1~2 次墙面反弹射线求解，隔墙也能精准几何狙击。',
+    summary: '大师级几何 AI：预判 2 次反弹与多目标枪线、直觉过窗抓射、1~2 次墙面反弹狙击与普通弹对消防御。',
+    traits: {
+      navigation: 4,
+      dodging: 4,
+      aiming: 4,
+      items: 4,
+    },
+    createAgent: (seed) =>
+      new TacticalTankBotAgent(
+        {
+          modelId: 'nightmare',
+          thinkIntervalSeconds: 0.08,
+          hesitationChance: 0,
+          fireCooldownFloorSeconds: 0.14,
+          routeRiskWeight: 0.95,
+          itemSearchMaxSteps: 6,
+          coverReloadEnabled: true,
+          multiTargetScoring: true,
+          shot: {
+            maxBounceSearch: 2,
+            sweepAngles: 40,
+            useLeadPrediction: true,
+            useMirrorReflections: true,
+            useCancelDefense: true,
+            aimToleranceRad: 0.13,
+            maxShotDist: 720,
+            maxNormalHitTimeSeconds: 0.9,
+            sealExitsEnabled: false,
+          },
+          maneuver: {
+            lookaheadSteps: 18,
+            twoStageBranching: false,
+            maxBounceThreat: 2,
+            includePost5thTail: false,
+            checkGunlines: false,
+            aimWhileMovingWeight: 0.55,
+            enableImmediateHitCapture: false,
+          },
+        },
+        seed
+      ),
+  },
+  {
+    id: 'hellbringer',
+    name: '地狱使者',
+    difficultyLevel: 5,
+    difficultyLabel: '终极 Boss',
+    accentColor: TANK_BOSS_THEME.accentHex,
+    isBoss: true,
+    summary: '绝对终极 Boss：五次弹道攻防与全段激光审查，零犹豫全局多目标预测、封锁退路与完整道具连携。',
     traits: {
       navigation: 5,
       dodging: 5,
@@ -543,19 +498,36 @@ export const TANK_BOT_MODELS: BotModelDefinition<TankWorldState>[] = [
       items: 5,
     },
     createAgent: (seed) =>
-      new ConfigurableTankBotAgent(
+      new TacticalTankBotAgent(
         {
-          thinkIntervalSeconds: 0.045,
-          aimToleranceRad: 0.085,
-          maxBounceSearch: 2,
-          bounceSweepSteps: 48,
-          dodgeHorizonSeconds: 0.92,
-          dodgeEnabled: true,
-          itemSearchRadiusCells: 7,
-          useLeadPrediction: true,
-          avoidMines: true,
+          modelId: 'hellbringer',
+          thinkIntervalSeconds: 0,
           hesitationChance: 0,
-          fireCooldownFloorSeconds: 0.18,
+          fireCooldownFloorSeconds: 0,
+          routeRiskWeight: 1.25,
+          itemSearchMaxSteps: 14,
+          coverReloadEnabled: true,
+          multiTargetScoring: true,
+          shot: {
+            maxBounceSearch: 5,
+            sweepAngles: 72,
+            useLeadPrediction: true,
+            useMirrorReflections: true,
+            useCancelDefense: true,
+            aimToleranceRad: 0.08,
+            maxShotDist: 1400,
+            maxNormalHitTimeSeconds: 0.78,
+            sealExitsEnabled: true,
+          },
+          maneuver: {
+            lookaheadSteps: 28,
+            twoStageBranching: true,
+            maxBounceThreat: 5,
+            includePost5thTail: true,
+            checkGunlines: true,
+            aimWhileMovingWeight: 0.9,
+            enableImmediateHitCapture: true,
+          },
         },
         seed
       ),
