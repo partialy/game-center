@@ -16,6 +16,12 @@ const KEY_RULES_PREFIX = 'local_arena_rules_v1_';
 const KEY_PRESETS_PREFIX = 'local_arena_presets_v1_';
 const KEY_MODE_PREFS = 'local_arena_mode_prefs_v1';
 const KEY_ARENA_SEATS_PREFIX = 'local_arena_brawl_seats_v1_';
+const KEY_MOBILE_PREFS = 'local_arena_mobile_prefs_v1';
+
+export interface MobilePreferences {
+  /** 虚拟摇杆与开火按键透明度百分比（10 ~ 80） */
+  virtualControlsOpacity: number;
+}
 
 export interface ModePreferences {
   gameMode: GameMode;
@@ -442,6 +448,42 @@ export function saveRulePresets<TRules>(
   return writeJsonRecord(
     key,
     { version: STORAGE_VERSION, presets },
+    customStorage
+  );
+}
+
+export function clampVirtualControlsOpacity(value: number): number {
+  if (!Number.isFinite(value)) return 55;
+  return Math.max(10, Math.min(80, Math.round(value)));
+}
+
+export function loadMobilePreferences(
+  customStorage?: StorageLike
+): StoreLoadResult<MobilePreferences> {
+  const defaults: MobilePreferences = { virtualControlsOpacity: 55 };
+  const res = readJsonRecord(KEY_MOBILE_PREFS, customStorage);
+  if (!res.found || res.corrupted || typeof res.data !== 'object' || res.data === null) {
+    return { value: defaults, notice: null };
+  }
+  const rawOpacity = (res.data as Record<string, unknown>).virtualControlsOpacity;
+  const parsedOpacity =
+    typeof rawOpacity === 'number' ? clampVirtualControlsOpacity(rawOpacity) : 55;
+  return {
+    value: { virtualControlsOpacity: parsedOpacity },
+    notice: null,
+  };
+}
+
+export function saveMobilePreferences(
+  prefs: MobilePreferences,
+  customStorage?: StorageLike
+): StoreSaveResult {
+  return writeJsonRecord(
+    KEY_MOBILE_PREFS,
+    {
+      version: STORAGE_VERSION,
+      virtualControlsOpacity: clampVirtualControlsOpacity(prefs.virtualControlsOpacity),
+    },
     customStorage
   );
 }

@@ -96,9 +96,10 @@ export function MatchReplayModal({
         ? extractTankTrails(events, idx, frame, 20)
         : [];
 
-      const rect = box.getBoundingClientRect();
-      const cssW = Math.max(320, Math.floor(rect.width));
-      const cssH = Math.max(220, Math.floor(rect.height));
+      const rawW = box.clientWidth || box.getBoundingClientRect().width;
+      const rawH = box.clientHeight || box.getBoundingClientRect().height;
+      const cssW = Math.max(240, Math.floor(rawW));
+      const cssH = Math.max(180, Math.floor(rawH));
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const targetW = Math.floor(cssW * dpr);
       const targetH = Math.floor(cssH * dpr);

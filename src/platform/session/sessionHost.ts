@@ -361,9 +361,11 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
   private resizeCanvas(): void {
     const parent = this.canvas.parentElement;
     if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    const cssWidth = Math.max(320, Math.floor(rect.width));
-    const cssHeight = Math.max(240, Math.floor(rect.height));
+    // 优先使用未受 CSS 90° 横屏旋转影响的布局宽高，回退 getBoundingClientRect
+    const rawW = parent.clientWidth || parent.getBoundingClientRect().width;
+    const rawH = parent.clientHeight || parent.getBoundingClientRect().height;
+    const cssWidth = Math.max(240, Math.floor(rawW));
+    const cssHeight = Math.max(180, Math.floor(rawH));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const nextW = Math.round(cssWidth * dpr);
     const nextH = Math.round(cssHeight * dpr);

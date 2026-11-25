@@ -154,11 +154,14 @@ export function CosmicBackdrop() {
 
     const syncSize = () => {
       const parent = canvas.parentElement;
-      const rect = parent
-        ? parent.getBoundingClientRect()
-        : { width: window.innerWidth, height: window.innerHeight };
-      width = Math.max(320, Math.floor(rect.width));
-      height = Math.max(240, Math.floor(rect.height));
+      const rawW = parent
+        ? parent.clientWidth || parent.getBoundingClientRect().width
+        : window.innerWidth;
+      const rawH = parent
+        ? parent.clientHeight || parent.getBoundingClientRect().height
+        : window.innerHeight;
+      width = Math.max(240, Math.floor(rawW));
+      height = Math.max(180, Math.floor(rawH));
       dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       const targetW = Math.round(width * dpr);
       const targetH = Math.round(height * dpr);

@@ -87,9 +87,10 @@ function mountTankBattleDemo(
   const syncSize = () => {
     const parent = canvas.parentElement;
     if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    const w = Math.max(320, Math.floor(rect.width));
-    const h = Math.max(240, Math.floor(rect.height));
+    const rawW = parent.clientWidth || parent.getBoundingClientRect().width;
+    const rawH = parent.clientHeight || parent.getBoundingClientRect().height;
+    const w = Math.max(240, Math.floor(rawW));
+    const h = Math.max(180, Math.floor(rawH));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const nextW = Math.round(w * dpr);
     const nextH = Math.round(h * dpr);
@@ -225,9 +226,10 @@ function mountProceduralCosmicDemo(
   const syncSize = () => {
     const parent = canvas.parentElement;
     if (!parent) return;
-    const rect = parent.getBoundingClientRect();
-    width = Math.max(320, Math.floor(rect.width));
-    height = Math.max(240, Math.floor(rect.height));
+    const rawW = parent.clientWidth || parent.getBoundingClientRect().width;
+    const rawH = parent.clientHeight || parent.getBoundingClientRect().height;
+    width = Math.max(240, Math.floor(rawW));
+    height = Math.max(180, Math.floor(rawH));
     dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const nextW = Math.round(width * dpr);
     const nextH = Math.round(height * dpr);
