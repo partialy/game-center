@@ -1,4 +1,4 @@
-import type { InputFrame } from '../../../platform/games/contracts';
+import type { AnalogMoveVector, InputFrame } from '../../../platform/games/contracts';
 import {
   type MazeData,
   type TankBattleRules,
@@ -24,6 +24,8 @@ export interface TankMotionInput {
   backward: boolean;
   turnLeft: boolean;
   turnRight: boolean;
+  /** 可选：360° 连续摇杆向量（优先于离散按键，提供指哪打哪手感） */
+  analogMove?: AnalogMoveVector | null;
 }
 
 export interface TankMotionPose {
@@ -47,7 +49,52 @@ export function stepTankMotion(
 ): TankMotionPose {
   const baseTurnSpeedRad = rules.tankTurnSpeedDeg * DEG_TO_RAD;
   const intuitiveTurnSpeedRad = baseTurnSpeedRad * 1.45;
-  const { forward, backward, turnLeft: left, turnRight: right } = actions;
+  const analogTurnSpeedRad = baseTurnSpeedRad * 2.15;
+  const { forward, backward, turnLeft: left, turnRight: right, analogMove } = actions;
+
+  // ===== 移动端 360° 连续摇杆模式：指哪转向、轻推微调瞄准、大推全速前进 =====
+  if (analogMove && analogMove.magnitude > 0) {
+    const mag = Math.min(1, Math.max(0, analogMove.magnitude));
+    const nextHoldTime = pose.moveHoldTime + dt;
+    const targetAngle = Math.atan2(analogMove.y, analogMove.x);
+    const angleDiff = normalizeAngleDelta(targetAngle - pose.angle);
+    const absDiff = Math.abs(angleDiff);
+    const maxStep = analogTurnSpeedRad * dt;
+
+    const nextAngle =
+      absDiff <= maxStep ? targetAngle : pose.angle + Math.sign(angleDiff) * maxStep;
+
+    // 轻推摇杆时压低位移以便精准微调炮口；推过 30% 后平滑加速并在 >72% 进入满速
+    let throttle = 0;
+    if (mag < 0.28) {
+      throttle = absDiff > MICRO_TAP_ANGLE_THRESHOLD_RAD ? 0.08 : 0.18 + (mag / 0.28) * 0.18;
+    } else if (nextHoldTime < 0.075 && absDiff > 0.14) {
+      throttle = 0.12;
+    } else {
+      const ramp = Math.min(1, (mag - 0.28) / 0.44);
+      const easeThrottle = 0.36 + 0.64 * (ramp * (2 - ramp));
+      const turnMod = Math.max(0.45, Math.cos(absDiff * 0.45));
+      throttle = easeThrottle * turnMod;
+    }
+
+    const dirLen = Math.hypot(analogMove.x, analogMove.y) || 1;
+    const dirX = analogMove.x / dirLen;
+    const dirY = analogMove.y / dirLen;
+    const stepDist = rules.tankForwardSpeed * throttle * dt;
+
+    const nextX = pose.x + dirX * stepDist;
+    const nextY = pose.y + dirY * stepDist;
+    const resolved = resolveCircleMazeCollision(nextX, nextY, TANK_RADIUS, maze);
+    const moved = Math.hypot(resolved.x - pose.x, resolved.y - pose.y);
+
+    return {
+      x: resolved.x,
+      y: resolved.y,
+      angle: nextAngle,
+      moveHoldTime: nextHoldTime,
+      treadDistance: pose.treadDistance + moved,
+    };
+  }
 
   if (rules.controlMode === 'classic') {
     let turnDir = 0;
@@ -170,6 +217,7 @@ export function updateTankMovement(
         turnRight: input.getAction(tank.slotId, 'turnRight').held,
         forward: input.getAction(tank.slotId, 'forward').held,
         backward: input.getAction(tank.slotId, 'backward').held,
+        analogMove: input.getMoveVector?.(tank.slotId) ?? null,
       },
       dt
     );

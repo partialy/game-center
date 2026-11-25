@@ -1,5 +1,6 @@
 import type {
   ActionInputState,
+  AnalogMoveVector,
   BotAgentInstance,
   BotRuntimeStatus,
   GameDefinition,
@@ -14,6 +15,7 @@ import type {
 } from '../games/contracts';
 import { WorkerBotRunner } from '../ai/workerSandbox';
 import { KeyboardInputHub } from '../input/keyboard';
+import { VirtualTouchInputSource } from '../input/virtualInput';
 import { soundEngine } from './audio';
 
 const FIXED_STEP_SECONDS = 1 / 60;
@@ -192,6 +194,12 @@ export class BotInputDriver<TWorld = unknown> {
         }
         return humanFrame.getAction(slotId, actionId);
       },
+      getMoveVector(slotId: PlayerSlotId): AnalogMoveVector | null {
+        if (aiStatesBySlot.has(slotId)) {
+          return null;
+        }
+        return humanFrame.getMoveVector?.(slotId) ?? null;
+      },
     };
   }
 }
@@ -218,6 +226,8 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
   private readonly session: GameSession<TWorld>;
   private readonly renderer: GameRenderer<TWorld>;
   private readonly inputHub: KeyboardInputHub;
+  private readonly virtualInput = new VirtualTouchInputSource();
+  private readonly primaryHumanSlotId: PlayerSlotId | null;
   private readonly botDriver: BotInputDriver<TWorld>;
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -252,6 +262,7 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
 
     // 仅将人类玩家接入键盘监听，AI 槽位不占用任何物理键位（Esc 暂停仍始终可用）
     const humanPlayers = snapshot.players.filter((p) => p.controller !== 'ai');
+    this.primaryHumanSlotId = humanPlayers[0]?.slotId ?? null;
     this.inputHub = new KeyboardInputHub(humanPlayers, () => {
       this.togglePause('user');
     });
@@ -292,6 +303,7 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
       this.rafId = null;
     }
     this.inputHub.detach();
+    this.virtualInput.clearAll();
     this.botDriver.destroy();
     document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     window.removeEventListener('resize', this.handleWindowResize);
@@ -313,6 +325,7 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
       this.rafId = null;
     }
     this.inputHub.clearAll();
+    this.virtualInput.clearAll();
     this.botDriver.resetEdges();
     this.accumulatorSeconds = 0;
     this.lastTimestampMs = null;
@@ -324,6 +337,7 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
     if (this.destroyed || !this.paused || this.matchFinishedEmitted) return;
     this.paused = false;
     this.inputHub.clearAll();
+    this.virtualInput.clearAll();
     this.botDriver.resetEdges();
     this.accumulatorSeconds = 0;
     this.lastTimestampMs = null;
@@ -339,6 +353,19 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
     } else {
       this.pause(reason);
     }
+  }
+
+  setVirtualMoveStick(x: number, y: number, magnitude: number): void {
+    if (this.paused || !this.primaryHumanSlotId) return;
+    this.virtualInput.setMoveStick(x, y, magnitude);
+  }
+
+  setVirtualFirePressed(pressed: boolean): void {
+    if (this.paused || !this.primaryHumanSlotId) {
+      if (!pressed) this.virtualInput.setFirePressed(false);
+      return;
+    }
+    this.virtualInput.setFirePressed(pressed);
   }
 
   setDebugMode(enabled: boolean): void {
@@ -399,7 +426,8 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
       // 防止单帧执行过多补步导致掉帧雪崩
       const maxStepsPerFrame = 4;
       while (this.accumulatorSeconds >= FIXED_STEP_SECONDS && steps < maxStepsPerFrame) {
-        const humanFrame = this.inputHub.sampleFrame();
+        const kbFrame = this.inputHub.sampleFrame();
+        const humanFrame = this.composeHumanFrame(kbFrame, performance.now());
         const aiT0 = performance.now();
         const inputFrame = this.botDriver.composeFrame(
           this.session.getWorldState(),
@@ -432,6 +460,39 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
       this.rafId = null;
     }
   };
+
+  private composeHumanFrame(kbFrame: InputFrame, nowMs: number): InputFrame {
+    const touchSlotId = this.primaryHumanSlotId;
+    if (!touchSlotId) {
+      return kbFrame;
+    }
+    const touchFire = this.virtualInput.sampleFireAction(nowMs);
+    const touchMove = this.virtualInput.getMoveVector();
+
+    if (!touchFire.held && !touchFire.justPressed && !touchFire.justReleased && !touchMove) {
+      return kbFrame;
+    }
+
+    return {
+      getAction(slotId: PlayerSlotId, actionId: string): ActionInputState {
+        const kb = kbFrame.getAction(slotId, actionId);
+        if (slotId !== touchSlotId || actionId !== 'fire') {
+          return kb;
+        }
+        return {
+          held: kb.held || touchFire.held,
+          justPressed: kb.justPressed || touchFire.justPressed,
+          justReleased: (kb.justReleased && !touchFire.held) || (touchFire.justReleased && !kb.held),
+        };
+      },
+      getMoveVector(slotId: PlayerSlotId): AnalogMoveVector | null {
+        if (slotId === touchSlotId && touchMove) {
+          return touchMove;
+        }
+        return kbFrame.getMoveVector?.(slotId) ?? null;
+      },
+    };
+  }
 
   private publishHudIfChanged(force: boolean): void {
     const hud = this.session.getHudState();

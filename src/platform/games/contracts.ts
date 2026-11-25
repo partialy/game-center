@@ -163,8 +163,19 @@ export interface ActionInputState {
   justReleased: boolean;
 }
 
+export interface AnalogMoveVector {
+  /** 归一化 X 分量 (-1..1)，向右为正 */
+  x: number;
+  /** 归一化 Y 分量 (-1..1)，向下为正 */
+  y: number;
+  /** 推杆有效幅度 (0..1)，0 表示空闲或处于死区内 */
+  magnitude: number;
+}
+
 export interface InputFrame {
   getAction(slotId: PlayerSlotId, actionId: string): ActionInputState;
+  /** 可选：连续 360° 摇杆方向输入（由移动端虚拟摇杆等模拟设备提供） */
+  getMoveVector?(slotId: PlayerSlotId): AnalogMoveVector | null;
 }
 
 export type RuleFieldType = 'number' | 'integer' | 'boolean' | 'select' | 'string';
