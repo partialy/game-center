@@ -92,6 +92,20 @@ export function DevPerfOverlay({ snapshot, onClose, embedded = false }: DevPerfO
         <span>步 {snapshot.simStepsPerFrame.toFixed(1)}/f</span>
       </div>
 
+      {/* AI 决策耗时与超预算状态 */}
+      {snapshot.aiComputeMs !== undefined && snapshot.aiComputeMs > 0 && (
+        <div className="mt-1 flex items-center justify-between text-[9px] font-mono-num">
+          <span className="text-[#9BA5B2]">AI {snapshot.aiComputeMs.toFixed(2)}ms</span>
+          <span
+            className={
+              snapshot.aiOverBudget ? 'text-[#FBBF24] font-bold' : 'text-[#4ADE80]'
+            }
+          >
+            {snapshot.aiOverBudget ? '正在计算' : '60Hz 同步'}
+          </span>
+        </div>
+      )}
+
       {/* JS 堆内存占用 */}
       <div className="mt-1.5 pt-1.5 border-t border-[#323A44]">
         <div className="flex items-center justify-between gap-1 text-[9px] text-[#B5BEC9]">

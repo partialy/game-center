@@ -11,16 +11,17 @@ import {
   RotateCcw,
   User,
 } from 'lucide-react';
-import type {
-  ActionDefinition,
-  BotModelDefinition,
-  BotModelSource,
-  CustomBotScriptRecord,
-  GameMode,
-  PlayerControllerKind,
-  PlayerProfile,
-  PlayerSlotId,
-  SingleMatchup,
+import {
+  BOSS_TIER_THEME,
+  type ActionDefinition,
+  type BotModelDefinition,
+  type BotModelSource,
+  type CustomBotScriptRecord,
+  type GameMode,
+  type PlayerControllerKind,
+  type PlayerProfile,
+  type PlayerSlotId,
+  type SingleMatchup,
 } from '../games/contracts';
 import {
   formatKeyCode,
@@ -533,6 +534,7 @@ export function PlayerSetupPanel({
                   <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={`${profile.slotId.toUpperCase()} 内置 AI 模型`}>
                     {botModels.map((model) => {
                       const selected = activeSelection?.source === 'builtin' && model.id === activeSelection.modelId;
+                      const isBoss = Boolean(model.isBoss || model.difficultyLevel === 5);
                       return (
                         <button
                           key={model.id}
@@ -544,14 +546,35 @@ export function PlayerSetupPanel({
                             e.stopPropagation();
                             onAiModelChange?.(profile.slotId, model.id);
                           }}
+                          style={
+                            isBoss
+                              ? {
+                                  backgroundColor: selected
+                                    ? BOSS_TIER_THEME.bgSoftHex
+                                    : BOSS_TIER_THEME.bgHex,
+                                  borderColor: selected
+                                    ? '#F43F5E'
+                                    : BOSS_TIER_THEME.borderHex,
+                                }
+                              : undefined
+                          }
                           className={`relative text-left rounded-lg border px-3 py-2 transition-colors cursor-pointer ${
-                            selected
+                            isBoss
+                              ? selected
+                                ? 'ring-2 ring-[#C81E3D]/60 shadow-sm'
+                                : 'hover:brightness-110'
+                              : selected
                               ? 'bg-white border-[#1C2127] shadow-xs'
                               : 'bg-[#F3EFE6] border-[#DDD7C9] hover:bg-white hover:border-[#BEB7A8]'
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1.5">
-                            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#1C2127] truncate">
+                            <span
+                              className={`inline-flex items-center gap-1.5 text-xs font-bold truncate ${
+                                isBoss ? '' : 'text-[#1C2127]'
+                              }`}
+                              style={isBoss ? { color: BOSS_TIER_THEME.textHex } : undefined}
+                            >
                               <span
                                 className="w-2 h-2 rounded-xs shrink-0"
                                 style={{ backgroundColor: model.accentColor }}
@@ -561,13 +584,18 @@ export function PlayerSetupPanel({
                             </span>
                             <span
                               className="text-[10px] font-mono-num font-bold shrink-0"
-                              style={{ color: model.accentColor }}
+                              style={{ color: isBoss ? '#FB7185' : model.accentColor }}
                             >
                               Lv.{model.difficultyLevel}
                             </span>
                           </div>
-                          <div className="text-[10px] text-[#5D6672] mt-0.5 truncate">
-                            {model.difficultyLabel}
+                          <div
+                            className={`text-[10px] mt-0.5 truncate ${
+                              isBoss ? 'font-semibold' : 'text-[#5D6672]'
+                            }`}
+                            style={isBoss ? { color: BOSS_TIER_THEME.mutedTextHex } : undefined}
+                          >
+                            {isBoss ? `Lv.${model.difficultyLevel} · ${model.name} (${model.difficultyLabel})` : model.difficultyLabel}
                           </div>
                         </button>
                       );

@@ -12,14 +12,16 @@ import {
   Zap,
   RotateCcw,
 } from 'lucide-react';
-import type {
-  ArenaSeatConfig,
-  BotModelDefinition,
-  CustomBotScriptRecord,
-  GameDefinition,
-  GameMode,
-  PlayerSlotId,
-  SingleMatchup,
+import arcadeIconUrl from '../../assets/ai-game-certer-icon_round.ico?url';
+import {
+  BOSS_TIER_THEME,
+  type ArenaSeatConfig,
+  type BotModelDefinition,
+  type CustomBotScriptRecord,
+  type GameDefinition,
+  type GameMode,
+  type PlayerSlotId,
+  type SingleMatchup,
 } from '../games/contracts';
 import { resolveSlotAiSelection } from './PlayerSetupPanel';
 import { CosmicBackdrop } from './CosmicBackdrop';
@@ -206,7 +208,7 @@ export function LobbyView({
       <header className="relative z-10 shrink-0 px-6 lg:px-10 py-3.5 border-b border-white/[0.08] bg-[#050918]/72">
         <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-8">
           <div className="flex items-center gap-3 min-w-0">
-            <CosmicArenaEmblem />
+            <img src={arcadeIconUrl} alt="" width={36} height={36} className="h-9 w-9 shrink-0" />
             <span className="font-display text-lg font-extrabold tracking-tight text-white whitespace-nowrap shrink-0">
               本地双人对战厅
             </span>
@@ -576,6 +578,7 @@ export function LobbyView({
                           const selected =
                             selectedOpponent?.source === 'builtin' &&
                             model.id === selectedOpponent.modelId;
+                          const isBoss = Boolean(model.isBoss || model.difficultyLevel === 5);
                           return (
                             <button
                               key={model.id}
@@ -583,8 +586,23 @@ export function LobbyView({
                               data-testid={`lobby-ai-model-${model.id}`}
                               aria-pressed={selected}
                               onClick={() => onAiModelChange('p2', model.id)}
+                              style={
+                                isBoss
+                                  ? {
+                                      backgroundColor: selected
+                                        ? BOSS_TIER_THEME.bgSoftHex
+                                        : BOSS_TIER_THEME.bgHex,
+                                      borderColor: selected
+                                        ? '#F43F5E'
+                                        : BOSS_TIER_THEME.borderHex,
+                                      color: BOSS_TIER_THEME.textHex,
+                                    }
+                                  : undefined
+                              }
                               className={`flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                                selected
+                                isBoss
+                                  ? 'shadow-xs'
+                                  : selected
                                   ? 'bg-white/[0.11] border-white/35 text-white'
                                   : 'bg-white/[0.03] border-white/[0.08] text-[#94A3B8] hover:bg-white/[0.07] hover:text-[#E2E8F0]'
                               }`}
@@ -599,8 +617,11 @@ export function LobbyView({
                                   {model.name}
                                 </span>
                               </span>
-                              <span className="font-mono-num text-[10px] font-semibold opacity-80 shrink-0">
-                                Lv.{model.difficultyLevel}
+                              <span
+                                className="font-mono-num text-[10px] font-semibold shrink-0"
+                                style={isBoss ? { color: '#FB7185' } : undefined}
+                              >
+                                {isBoss ? `BOSS Lv.${model.difficultyLevel}` : `Lv.${model.difficultyLevel}`}
                               </span>
                             </button>
                           );
@@ -884,35 +905,5 @@ export function LobbyView({
         </div>
       </footer>
     </main>
-  );
-}
-
-function CosmicArenaEmblem() {
-  return (
-    <svg viewBox="0 0 36 36" className="w-9 h-9 shrink-0" aria-hidden="true">
-      <rect
-        x="1"
-        y="1"
-        width="34"
-        height="34"
-        rx="9"
-        fill="#0D162E"
-        stroke="rgba(125,211,252,0.35)"
-        strokeWidth="1.2"
-      />
-      <ellipse
-        cx="18"
-        cy="18"
-        rx="12.5"
-        ry="5.5"
-        transform="rotate(-24 18 18)"
-        fill="none"
-        stroke="#7DD3FC"
-        strokeWidth="1.4"
-        strokeOpacity="0.85"
-      />
-      <circle cx="18" cy="18" r="4.2" fill="#F5C469" />
-      <circle cx="27.2" cy="13.5" r="2" fill="#E85D3F" />
-    </svg>
   );
 }

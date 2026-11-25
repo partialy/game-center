@@ -45,13 +45,25 @@ export interface BotAgentInstance<TWorld = unknown> {
 export interface BotModelDefinition<TWorld = unknown> {
   id: string;
   name: string;
-  difficultyLevel: 1 | 2 | 3 | 4;
+  difficultyLevel: 1 | 2 | 3 | 4 | 5;
   difficultyLabel: string;
   accentColor: string;
+  /** 是否为终极 Boss 档位（UI 启用专属暗红深紫高亮，不占用玩家坦克涂装色） */
+  isBoss?: boolean;
   summary: string;
   traits: BotTraitRatings;
   createAgent(seed: number): BotAgentInstance<TWorld>;
 }
+
+/** 集中定义的 Lv.5 Boss 专属视觉标识（深紫底 + 暗红边框与徽章），不占用玩家涂装色 */
+export const BOSS_TIER_THEME = {
+  bgHex: '#23102B',
+  bgSoftHex: '#2E1436',
+  borderHex: '#9E1B32',
+  accentHex: '#C81E3D',
+  textHex: '#FCE7F3',
+  mutedTextHex: '#E9B3C8',
+} as const;
 
 export interface BotValidationReport {
   status: 'untested' | 'verified' | 'error';
@@ -431,6 +443,8 @@ export interface GameSession<TWorld = unknown> {
 export interface GameRenderer<TWorld = unknown> {
   resize(cssWidth: number, cssHeight: number, dpr: number): void;
   render(ctx: CanvasRenderingContext2D, world: TWorld, realDtSeconds: number): void;
+  /** 可选：由平台在 F3 开发者调试模式切换时开启/关闭战场战术调试叠加层 */
+  setDebugMode?(enabled: boolean): void;
 }
 
 export interface RulePreset<TRules = Record<string, unknown>> {

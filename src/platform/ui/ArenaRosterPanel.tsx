@@ -9,11 +9,12 @@ import {
   Trash2,
   User,
 } from 'lucide-react';
-import type {
-  ArenaSeatConfig,
-  BotModelDefinition,
-  CustomBotScriptRecord,
-  GameDefinition,
+import {
+  BOSS_TIER_THEME,
+  type ArenaSeatConfig,
+  type BotModelDefinition,
+  type CustomBotScriptRecord,
+  type GameDefinition,
 } from '../games/contracts';
 import { validateArenaSeatName } from '../ai/customBotStore';
 import { PLAYER_COLOR_PALETTE } from '../input/bindings';
@@ -349,6 +350,23 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                       Worker 沙箱脚本
                     </span>
                   )}
+                  {seat.controller === 'ai' &&
+                    seat.aiSource === 'builtin' &&
+                    builtinModels.some(
+                      (m) => m.id === seat.aiModelId && (m.isBoss || m.difficultyLevel === 5)
+                    ) && (
+                      <span
+                        data-testid={`brawl-boss-badge-${seat.slotId}`}
+                        className="px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                        style={{
+                          backgroundColor: BOSS_TIER_THEME.bgHex,
+                          borderColor: BOSS_TIER_THEME.borderHex,
+                          color: BOSS_TIER_THEME.textHex,
+                        }}
+                      >
+                        Lv.5 · 地狱使者
+                      </span>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">

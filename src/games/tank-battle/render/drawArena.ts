@@ -1,4 +1,5 @@
 import type { GameRenderer } from '../../../platform/games/contracts';
+import { getWorldAiDebugSnapshots } from '../ai/botScripts';
 import {
   CELL_SIZE,
   DROP_PICKUP_RADIUS,
@@ -42,6 +43,11 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
   private cssHeight = 600;
   private dpr = 1;
   private visualTime = 0;
+  private debugMode = false;
+
+  setDebugMode(enabled: boolean): void {
+    this.debugMode = enabled;
+  }
 
   private readonly particles: PooledParticle[] = Array.from(
     { length: PARTICLE_POOL_SIZE },
@@ -145,6 +151,96 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
     }
     this.drawParticles(ctx);
 
+    // 9. F3 开发者调试模式下绘制简洁 AI 战术调试叠加层
+    if (this.debugMode) {
+      this.drawAiDebugOverlay(ctx, world);
+    }
+
+    ctx.restore();
+  }
+
+  private drawAiDebugOverlay(ctx: CanvasRenderingContext2D, world: TankWorldState): void {
+    const debugMap = getWorldAiDebugSnapshots(world);
+    if (!debugMap) return;
+
+    ctx.save();
+    for (let i = 0; i < world.tanks.length; i += 1) {
+      const tank = world.tanks[i];
+      if (!tank.alive) continue;
+      const snap = debugMap[tank.slotId];
+      if (!snap) continue;
+
+      // 1. 规划的迷宫掩体/寻路路径
+      if (snap.plannedPathCells.length >= 2) {
+        ctx.save();
+        ctx.strokeStyle = tank.colorHex;
+        ctx.globalAlpha = 0.45;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        for (let pi = 0; pi < snap.plannedPathCells.length; pi += 1) {
+          const cell = world.maze.cells[snap.plannedPathCells[pi]];
+          if (!cell) continue;
+          if (pi === 0) ctx.moveTo(tank.x, tank.y);
+          else ctx.lineTo(cell.centerX, cell.centerY);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 2. 锁定目标连线
+      if (snap.targetSlotId) {
+        const target = world.tanks.find((t) => t.slotId === snap.targetSlotId && t.alive);
+        if (target) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(220, 38, 38, 0.35)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([2, 3]);
+          ctx.beginPath();
+          ctx.moveTo(tank.x, tank.y);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // 3. 最危险弹道告警点连线
+      if (snap.mostDangerousPoint && Number.isFinite(snap.minThreatTtc)) {
+        ctx.save();
+        ctx.strokeStyle = '#F59E0B';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(tank.x, tank.y);
+        ctx.lineTo(snap.mostDangerousPoint.x, snap.mostDangerousPoint.y);
+        ctx.stroke();
+        ctx.fillStyle = '#F59E0B';
+        ctx.beginPath();
+        ctx.arc(snap.mostDangerousPoint.x, snap.mostDangerousPoint.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 4. 紧凑战术状态标签（目标 / 拒火原因 / 威胁 TTC）
+      const ttcStr = Number.isFinite(snap.minThreatTtc) ? `${snap.minThreatTtc.toFixed(2)}s` : '-';
+      const reasonStr = snap.firedThisStep
+        ? snap.isCancelShot
+          ? 'CANCEL'
+          : 'FIRE'
+        : snap.fireRejectedReason !== 'ok'
+        ? snap.fireRejectedReason
+        : snap.goalKind;
+      const label = `${snap.modelId} · ${reasonStr} · ttc:${ttcStr}`;
+
+      ctx.font = '600 9px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = 'rgba(20, 24, 31, 0.82)';
+      const tw = ctx.measureText(label).width + 8;
+      const ly = tank.y + TANK_RADIUS + 6;
+      ctx.fillRect(tank.x - tw * 0.5, ly, tw, 13);
+      ctx.fillStyle = '#F8FAFC';
+      ctx.fillText(label, tank.x, ly + 2);
+    }
     ctx.restore();
   }
 

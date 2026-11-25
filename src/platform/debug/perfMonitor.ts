@@ -21,6 +21,8 @@ export interface PerfSnapshot {
   avgFrameMs: number;
   maxFrameMs: number;
   simStepsPerFrame: number;
+  aiComputeMs?: number;
+  aiOverBudget?: boolean;
   fpsHistory: number[];
   memory: MemorySnapshot | null;
   paused: boolean;
@@ -125,6 +127,7 @@ interface FrameSample {
   timestampMs: number;
   deltaMs: number;
   simSteps: number;
+  aiMs: number;
 }
 
 export interface PerfCollectorOptions {
@@ -158,6 +161,8 @@ export class PerfMetricsCollector {
   private cachedAvgFrameMs = 0;
   private cachedMaxFrameMs = 0;
   private cachedSimSteps = 0;
+  private cachedAiMs = 0;
+  private cachedAiOverBudget = false;
 
   constructor(options: PerfCollectorOptions = {}) {
     this.windowMs = options.windowMs ?? 1000;
@@ -181,13 +186,15 @@ export class PerfMetricsCollector {
     this.cachedAvgFrameMs = 0;
     this.cachedMaxFrameMs = 0;
     this.cachedSimSteps = 0;
+    this.cachedAiMs = 0;
+    this.cachedAiOverBudget = false;
   }
 
   /**
    * 记录一帧主循环回调。
    * 当达到发布节流间隔时更新聚合指标并返回 true，供外部拉取最新快照。
    */
-  recordFrame(timestampMs: number, simSteps: number): boolean {
+  recordFrame(timestampMs: number, simSteps: number, aiComputeMs = 0): boolean {
     if (this.lastTimestampMs === null) {
       this.lastTimestampMs = timestampMs;
       if (this.lastPublishMs === null) {
@@ -203,7 +210,7 @@ export class PerfMetricsCollector {
       return false;
     }
 
-    this.samples.push({ timestampMs, deltaMs, simSteps });
+    this.samples.push({ timestampMs, deltaMs, simSteps, aiMs: aiComputeMs });
 
     const cutoff = timestampMs - this.windowMs;
     while (this.samples.length > 0 && this.samples[0].timestampMs < cutoff) {
@@ -228,6 +235,8 @@ export class PerfMetricsCollector {
       avgFrameMs: this.cachedAvgFrameMs,
       maxFrameMs: this.cachedMaxFrameMs,
       simStepsPerFrame: this.cachedSimSteps,
+      aiComputeMs: this.cachedAiMs,
+      aiOverBudget: this.cachedAiOverBudget,
       fpsHistory: [...this.fpsHistory],
       memory: readMemorySnapshot(perfObj),
       paused,
@@ -240,16 +249,22 @@ export class PerfMetricsCollector {
       this.cachedAvgFrameMs = 0;
       this.cachedMaxFrameMs = 0;
       this.cachedSimSteps = 0;
+      this.cachedAiMs = 0;
+      this.cachedAiOverBudget = false;
       return;
     }
 
     let totalDelta = 0;
     let maxDelta = 0;
     let totalSteps = 0;
+    let totalAiMs = 0;
+    let maxAiMs = 0;
     for (const sample of this.samples) {
       totalDelta += sample.deltaMs;
       if (sample.deltaMs > maxDelta) maxDelta = sample.deltaMs;
       totalSteps += sample.simSteps;
+      totalAiMs += sample.aiMs;
+      if (sample.aiMs > maxAiMs) maxAiMs = sample.aiMs;
     }
 
     const avgMs = totalDelta / this.samples.length;
@@ -259,6 +274,8 @@ export class PerfMetricsCollector {
     this.cachedAvgFrameMs = Math.round(avgMs * 10) / 10;
     this.cachedMaxFrameMs = Math.round(maxDelta * 10) / 10;
     this.cachedSimSteps = Math.round((totalSteps / this.samples.length) * 10) / 10;
+    this.cachedAiMs = Math.round((totalAiMs / this.samples.length) * 100) / 100;
+    this.cachedAiOverBudget = maxAiMs > 16.67;
 
     this.fpsHistory.push(fps);
     if (this.fpsHistory.length > this.historyLength) {

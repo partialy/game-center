@@ -202,8 +202,8 @@ export interface SessionHostCallbacks {
   onMatchFinished: (result: MatchResultEvent) => void;
   /** 可选：自定义 Worker AI 运行状态变化时回调（用于实时超时/报错状态显示） */
   onBotStatusUpdate?: (statuses: Record<PlayerSlotId, BotRuntimeStatus>) => void;
-  /** 可选：每渲染帧回调一次，用于开发者调试模式下的实时 FPS 监控 */
-  onFrame?: (timestampMs: number, simSteps: number) => void;
+  /** 可选：每渲染帧回调一次，用于开发者调试模式下的实时 FPS 与 AI 耗时监控 */
+  onFrame?: (timestampMs: number, simSteps: number, aiComputeMs: number) => void;
 }
 
 /**
@@ -248,6 +248,7 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
     this.callbacks = callbacks;
     this.session = game.createSession(snapshot);
     this.renderer = game.createRenderer();
+    this.renderer.setDebugMode?.(false);
 
     // 仅将人类玩家接入键盘监听，AI 槽位不占用任何物理键位（Esc 暂停仍始终可用）
     const humanPlayers = snapshot.players.filter((p) => p.controller !== 'ai');
@@ -340,6 +341,13 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
     }
   }
 
+  setDebugMode(enabled: boolean): void {
+    this.renderer.setDebugMode?.(enabled);
+    if (this.paused && !this.destroyed) {
+      this.renderer.render(this.ctx, this.session.getWorldState(), 0);
+    }
+  }
+
   private readonly handleVisibilityChange = (): void => {
     if (document.hidden && !this.paused && !this.matchFinishedEmitted) {
       this.pause('background');
@@ -383,17 +391,20 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
     const frameDt = Math.min(rawDt, MAX_FRAME_DT_SECONDS);
 
     let steps = 0;
+    let totalAiMs = 0;
     if (!this.matchFinishedEmitted) {
       this.accumulatorSeconds += frameDt;
       // 防止单帧执行过多补步导致掉帧雪崩
       const maxStepsPerFrame = 4;
       while (this.accumulatorSeconds >= FIXED_STEP_SECONDS && steps < maxStepsPerFrame) {
         const humanFrame = this.inputHub.sampleFrame();
+        const aiT0 = performance.now();
         const inputFrame = this.botDriver.composeFrame(
           this.session.getWorldState(),
           FIXED_STEP_SECONDS,
           humanFrame
         );
+        totalAiMs += performance.now() - aiT0;
         const result = this.session.step(FIXED_STEP_SECONDS, inputFrame);
         for (const sound of result.sounds) {
           soundEngine.play(sound);
@@ -411,7 +422,7 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
     }
 
     this.renderer.render(this.ctx, this.session.getWorldState(), frameDt);
-    this.callbacks.onFrame?.(timestampMs, steps);
+    this.callbacks.onFrame?.(timestampMs, steps, totalAiMs);
 
     if (!this.destroyed && !this.paused && !this.matchFinishedEmitted) {
       this.rafId = window.requestAnimationFrame(this.loop);

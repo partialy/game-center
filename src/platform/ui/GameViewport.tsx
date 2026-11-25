@@ -12,15 +12,16 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import type {
-  BotRuntimeStatus,
-  GameDefinition,
-  HudState,
-  MatchLaunchSnapshot,
-  MatchResultEvent,
-  PlayerConfig,
-  PlayerHudEntry,
-  PlayerSlotId,
+import {
+  BOSS_TIER_THEME,
+  type BotRuntimeStatus,
+  type GameDefinition,
+  type HudState,
+  type MatchLaunchSnapshot,
+  type MatchResultEvent,
+  type PlayerConfig,
+  type PlayerHudEntry,
+  type PlayerSlotId,
 } from '../games/contracts';
 import { buildCompactMatchKeyHint } from '../input/keyboardVisualizer';
 import { soundEngine } from '../session/audio';
@@ -110,15 +111,16 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
       onMatchFinished: (result) => {
         onMatchFinishedRef.current(result);
       },
-      onFrame: (timestampMs, simSteps) => {
+      onFrame: (timestampMs, simSteps, aiComputeMs) => {
         if (!debugModeRef.current) return;
-        if (collector.recordFrame(timestampMs, simSteps)) {
+        if (collector.recordFrame(timestampMs, simSteps, aiComputeMs)) {
           setPerfSnapshot(collector.getSnapshot(false));
         }
       },
     });
 
     hostRef.current = host;
+    host.setDebugMode(debugModeRef.current);
     setPaused(false);
     if (debugModeRef.current) {
       setPerfSnapshot(collector.getSnapshot(false));
@@ -133,6 +135,7 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
 
   // 开发者调试模式切换或暂停期间刷新内存快照（不额外启动 RAF，打开设置层时暂停轮询）
   useEffect(() => {
+    hostRef.current?.setDebugMode(debugMode);
     const collector = perfCollectorRef.current;
     collector.resetTiming();
     if (!debugMode || settingsOverlayOpen) return;
@@ -321,6 +324,10 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
               {(hud?.players ?? []).map((entry) => {
                 const cfg = snapshot.players.find((c) => c.slotId === entry.slotId);
                 const runtime = botStatuses[entry.slotId];
+                const isBoss =
+                  cfg?.controller === 'ai' &&
+                  cfg?.aiSource !== 'custom' &&
+                  cfg?.aiModelId === 'hellbringer';
                 const ammoPct = Math.round(
                   (entry.ammo / Math.max(1, entry.maxAmmo)) * 100
                 );
@@ -328,8 +335,18 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                   <div
                     key={entry.slotId}
                     data-testid={`arena-hud-tile-${entry.slotId}`}
+                    style={
+                      isBoss && entry.alive
+                        ? {
+                            backgroundColor: BOSS_TIER_THEME.bgHex,
+                            borderColor: BOSS_TIER_THEME.borderHex,
+                          }
+                        : undefined
+                    }
                     className={`rounded-md border px-2 py-1.5 flex flex-col gap-1 min-w-0 transition-opacity ${
-                      entry.alive
+                      isBoss && entry.alive
+                        ? 'text-[#FCE7F3]'
+                        : entry.alive
                         ? 'bg-white border-[#D6D0C2]'
                         : 'bg-[#F0ECE2] border-[#DDD7C9] opacity-60'
                     }`}
@@ -342,21 +359,35 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                             backgroundColor: entry.alive ? entry.colorHex : '#7D8590',
                           }}
                         />
-                        <span className="text-[11px] font-bold text-[#1C2127] truncate">
+                        <span
+                          className={`text-[11px] font-bold truncate ${
+                            isBoss && entry.alive ? 'text-[#FCE7F3]' : 'text-[#1C2127]'
+                          }`}
+                        >
                           {entry.displayName}
                         </span>
                       </div>
-                      <span className="font-mono-num text-sm font-extrabold text-[#1C2127] leading-none shrink-0">
+                      <span
+                        className={`font-mono-num text-sm font-extrabold leading-none shrink-0 ${
+                          isBoss && entry.alive ? 'text-[#FCE7F3]' : 'text-[#1C2127]'
+                        }`}
+                      >
                         {entry.score}
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between gap-1 text-[10px] text-[#5D6672]">
+                    <div
+                      className={`flex items-center justify-between gap-1 text-[10px] ${
+                        isBoss && entry.alive ? 'text-[#E9B3C8]' : 'text-[#5D6672]'
+                      }`}
+                    >
                       <span className="truncate">
                         {cfg?.controller === 'human'
                           ? '玩家'
                           : cfg?.aiSource === 'custom'
                           ? `自定义 · ${cfg.aiModelName ?? 'Worker'}`
+                          : isBoss
+                          ? `Lv.5 · ${cfg?.aiModelName ?? '地狱使者'}`
                           : cfg?.aiModelName ?? 'AI'}
                       </span>
                       {!entry.alive ? (
@@ -701,6 +732,8 @@ function PlayerHudStrip({
   const isRight = align === 'right';
   const showPips = player.maxAmmo <= 14;
   const isAi = config?.controller === 'ai';
+  const isBoss =
+    isAi && config?.aiSource !== 'custom' && config?.aiModelId === 'hellbringer';
 
   return (
     <div
@@ -731,9 +764,27 @@ function PlayerHudStrip({
             {player.displayName}
           </span>
           {isAi && (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#222830] text-[#F5F2EB] text-[10px] font-bold whitespace-nowrap shrink-0">
-              <Bot className="w-2.5 h-2.5 text-[#7DD3FC]" aria-hidden="true" />
-              {config?.aiModelName ?? 'AI'}
+            <span
+              data-testid={isBoss ? `hud-boss-badge-${player.slotId}` : undefined}
+              style={
+                isBoss
+                  ? {
+                      backgroundColor: BOSS_TIER_THEME.bgHex,
+                      borderColor: BOSS_TIER_THEME.borderHex,
+                      color: BOSS_TIER_THEME.textHex,
+                    }
+                  : undefined
+              }
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap shrink-0 border ${
+                isBoss ? '' : 'bg-[#222830] border-transparent text-[#F5F2EB]'
+              }`}
+            >
+              <Bot
+                className="w-2.5 h-2.5"
+                style={{ color: isBoss ? '#FB7185' : '#7DD3FC' }}
+                aria-hidden="true"
+              />
+              {isBoss ? `Lv.5 · ${config?.aiModelName ?? '地狱使者'}` : config?.aiModelName ?? 'AI'}
             </span>
           )}
           <span className="text-xs font-mono-num font-semibold text-[#55606C] whitespace-nowrap">
@@ -840,6 +891,7 @@ function MatchAiInfoCard({
   testId: string;
 }) {
   const isCustom = player.aiSource === 'custom';
+  const isBoss = !isCustom && player.aiModelId === 'hellbringer';
   const hasFault =
     runtimeStatus && (runtimeStatus.state === 'timeout' || runtimeStatus.state === 'error');
 
@@ -847,9 +899,24 @@ function MatchAiInfoCard({
     <aside
       data-testid={testId}
       aria-label={`${player.displayName} AI 策略信息`}
-      className="w-full rounded-lg border border-[#CFC8B9] bg-[#FAF8F4]/92 px-2.5 py-2 shadow-xs text-[#1C2127] space-y-1.5"
+      style={
+        isBoss
+          ? {
+              backgroundColor: BOSS_TIER_THEME.bgHex,
+              borderColor: BOSS_TIER_THEME.borderHex,
+              color: BOSS_TIER_THEME.textHex,
+            }
+          : undefined
+      }
+      className={`w-full rounded-lg border px-2.5 py-2 shadow-xs space-y-1.5 ${
+        isBoss ? '' : 'border-[#CFC8B9] bg-[#FAF8F4]/92 text-[#1C2127]'
+      }`}
     >
-      <div className="flex items-center justify-between gap-1 pb-1 border-b border-[#E5DFD3]">
+      <div
+        className={`flex items-center justify-between gap-1 pb-1 border-b ${
+          isBoss ? 'border-[#5C1D3E]' : 'border-[#E5DFD3]'
+        }`}
+      >
         <div className="flex items-center gap-1.5 min-w-0">
           <span
             className="w-2 h-2 rounded-[2px] shrink-0"
@@ -858,19 +925,30 @@ function MatchAiInfoCard({
           />
           <span className="text-[11px] font-bold truncate">{player.displayName}</span>
         </div>
-        <span className="text-[9px] font-bold text-[#1F4E78] whitespace-nowrap shrink-0">
-          {isCustom ? 'Worker AI' : 'TS AI'}
+        <span
+          className="text-[9px] font-bold whitespace-nowrap shrink-0"
+          style={{ color: isBoss ? '#FB7185' : '#1F4E78' }}
+        >
+          {isCustom ? 'Worker AI' : isBoss ? 'BOSS Lv.5' : 'TS AI'}
         </span>
       </div>
 
-      <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#1C2127]">
-        <Bot className="w-3.5 h-3.5 text-[#222830] shrink-0" aria-hidden="true" />
+      <div className="flex items-center gap-1.5 text-[11px] font-bold">
+        <Bot
+          className="w-3.5 h-3.5 shrink-0"
+          style={{ color: isBoss ? '#FB7185' : '#222830' }}
+          aria-hidden="true"
+        />
         <span className="truncate">{player.aiModelName ?? '战术游击'}</span>
       </div>
 
       <div
         className={`text-[10px] leading-tight ${
-          hasFault ? 'text-[#B3261E] font-semibold' : 'text-[#68717D]'
+          hasFault
+            ? 'text-[#B3261E] font-semibold'
+            : isBoss
+            ? 'text-[#E9B3C8]'
+            : 'text-[#68717D]'
         }`}
       >
         {hasFault
@@ -879,6 +957,8 @@ function MatchAiInfoCard({
             : '脚本报错 · 已隔离'
           : isCustom && runtimeStatus && runtimeStatus.avgMs > 0
           ? `沙箱运行 · ${runtimeStatus.avgMs.toFixed(1)}ms`
+          : isBoss
+          ? '5次弹道攻防 · 全段激光'
           : '自主寻路 · 弹道预判'}
       </div>
     </aside>
