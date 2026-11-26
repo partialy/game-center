@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@heroui/react';
 import {
-  Bot,
   ChevronDown,
   ChevronUp,
   Code2,
@@ -8,15 +8,12 @@ import {
   Maximize2,
   Minimize2,
   Play,
-  SlidersHorizontal,
-  Swords,
-  Users,
-  Zap,
   RotateCcw,
+  SlidersHorizontal,
+  Zap,
 } from 'lucide-react';
 import arcadeIconUrl from '../../assets/ai-game-certer-icon_round.ico?url';
 import {
-  BOSS_TIER_THEME,
   type ArenaSeatConfig,
   type BotModelDefinition,
   type CustomBotScriptRecord,
@@ -26,9 +23,11 @@ import {
   type SingleMatchup,
 } from '../games/contracts';
 import { useMobileViewport } from '../mobile/MobileViewportContext';
+import { useTheme } from '../theme/ThemeContext';
 import { resolveSlotAiSelection } from './PlayerSetupPanel';
 import { CosmicBackdrop } from './CosmicBackdrop';
 import { LobbyShowcaseCanvas } from './LobbyShowcaseCanvas';
+import { AppSelect, ModeTabs, ThemeQuickToggle, type SelectOptionGroup } from './heroUiHelpers';
 import {
   REEL_ITEM_GAP_PX,
   REEL_ITEM_HEIGHT_PX,
@@ -62,10 +61,11 @@ interface LobbyViewProps {
 const WHEEL_COOLDOWN_MS = 200;
 
 /**
- * 暗色星河宇宙风格本地对战大厅：
- * - 左侧竖屏录像带式缩略图轮播，中央精准方框框选当前游戏，支持滚轮、上下键、上下按钮及直接点击缩略图平滑切换
- * - 中右侧展示当前选中游戏的信息、单人/多人/AI 乱斗模式切换、AI 难度快选与开始游戏/快速开战/设置入口
- * - 右侧大屏实时渲染当前选中游戏的实机或概念游玩示例动画
+ * HeroUI v3 本地对战大厅（全站浅色 / 深色 / 自定义强调色双模适配）：
+ * - 深色模式保留星河宇宙视觉；浅色模式切换为干净制图工坊浅色风格，确保双模式均高对比度清晰可读
+ * - 左侧录像带竖屏缩略图轮播，中央精准选框，支持滚轮/方向键/点击切换
+ * - 中栏使用 HeroUI ModeTabs 与 Button 呈现模式切换、AI 模型快选与启动操作
+ * - 右侧大屏实时渲染实机游玩示例动画
  */
 export function LobbyView({
   games,
@@ -86,6 +86,8 @@ export function LobbyView({
   const catalog = useMemo(() => buildLobbyCatalog(games), [games]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const { resolvedMode } = useTheme();
+  const isDark = resolvedMode === 'dark';
 
   const reelViewportRef = useRef<HTMLDivElement | null>(null);
   const wheelAccumRef = useRef(0);
@@ -128,7 +130,6 @@ export function LobbyView({
     [catalog.length]
   );
 
-  // 键盘交互：↑/↓ 或 W/S 上下切换录像带；Enter/Space 快捷启动当前可玩游戏
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
@@ -156,7 +157,7 @@ export function LobbyView({
       if (
         (event.code === 'Enter' || event.code === 'Space') &&
         !event.repeat &&
-        !(target instanceof HTMLElement && target.tagName === 'BUTTON')
+        !(target instanceof HTMLElement && (target.tagName === 'BUTTON' || target.getAttribute('role') === 'tab'))
       ) {
         if (activeEntry?.playable) {
           event.preventDefault();
@@ -169,7 +170,6 @@ export function LobbyView({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeEntry, onEnterPreMatch, stepSelection]);
 
-  // 左侧录像带鼠标滚轮上下滚动切换（使用非 passive 原生监听，避免浏览器 passive preventDefault 报错）
   useEffect(() => {
     const el = reelViewportRef.current;
     if (!el) return;
@@ -212,15 +212,23 @@ export function LobbyView({
   const isCompactLandscape = isMobileOrTablet && logicalHeight <= 540;
 
   return (
-    <main className="relative h-full w-full overflow-hidden bg-[#040712] text-[#F1F5F9] flex flex-col select-none">
-      {/* 动态星河宇宙背景 */}
-      <CosmicBackdrop />
+    <main
+      className={`relative h-full w-full overflow-hidden flex flex-col select-none transition-colors ${
+        isDark
+          ? 'bg-[#040712] text-[#F1F5F9]'
+          : 'drafting-surface text-[var(--foreground)]'
+      }`}
+    >
+      {/* 深色模式呈现星河宇宙背景；浅色模式使用纯净制图网格底纹 */}
+      {isDark && <CosmicBackdrop />}
 
       {/* 顶部极简导航栏 */}
       <header
-        className={`relative z-10 shrink-0 border-b border-white/[0.08] bg-[#050918]/72 ${
-          isCompactLandscape ? 'px-3.5 py-1.5' : 'px-6 lg:px-10 py-3.5'
-        }`}
+        className={`relative z-10 shrink-0 border-b ${
+          isDark
+            ? 'border-white/[0.08] bg-[#050918]/78'
+            : 'border-[var(--border)] bg-[var(--surface)]/92'
+        } ${isCompactLandscape ? 'px-3.5 py-1.5' : 'px-6 lg:px-10 py-3'}`}
       >
         <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -232,9 +240,9 @@ export function LobbyView({
               className={isCompactLandscape ? 'h-7 w-7 shrink-0' : 'h-9 w-9 shrink-0'}
             />
             <span
-              className={`font-display font-extrabold tracking-tight text-white whitespace-nowrap shrink-0 ${
+              className={`font-display font-extrabold tracking-tight whitespace-nowrap shrink-0 ${
                 isCompactLandscape ? 'text-base' : 'text-lg'
-              }`}
+              } ${isDark ? 'text-white' : 'text-[var(--foreground)]'}`}
             >
               本地双人对战厅
             </span>
@@ -242,16 +250,17 @@ export function LobbyView({
 
           {primaryPlayableGame && (
             <div className="flex items-center gap-2 shrink-0">
+              <ThemeQuickToggle testId="lobby-theme-quick-toggle" />
+
               {canRequestFullscreen && (
-                <button
-                  type="button"
-                  onClick={() =>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onPress={() =>
                     void (isFullscreen ? exitFullscreen() : requestLandscapeFullscreen())
                   }
                   aria-label={isFullscreen ? '退出全屏' : '全屏横屏'}
-                  className={`inline-flex items-center gap-1 text-xs font-semibold text-[#E2E8F0] bg-white/[0.07] hover:bg-white/[0.14] border border-white/12 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    isCompactLandscape ? 'px-2.5 py-1.5' : 'px-3 py-2'
-                  }`}
+                  className="min-h-[36px] max-sm:min-h-[42px] whitespace-nowrap shrink-0"
                 >
                   {isFullscreen ? (
                     <Minimize2 className="w-3.5 h-3.5" aria-hidden="true" />
@@ -259,42 +268,45 @@ export function LobbyView({
                     <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
                   )}
                   <span className="hidden sm:inline">{isFullscreen ? '退出全屏' : '全屏'}</span>
-                </button>
+                </Button>
               )}
+
               {primaryPlayableGame.aiSdk && (
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   data-testid="lobby-open-studio-btn"
-                  onClick={() => onOpenAiStudio(primaryPlayableGame.id, 'prompt')}
-                  className={`inline-flex items-center gap-1.5 text-xs font-semibold text-[#E0F2FE] bg-[#132544] hover:bg-[#1B335C] border border-[#7DD3FC]/35 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC] focus-visible:outline-offset-2 ${
-                    isCompactLandscape ? 'px-2.5 py-1.5' : 'px-3.5 py-2'
-                  }`}
+                  onPress={() => onOpenAiStudio(primaryPlayableGame.id, 'prompt')}
+                  className="h-9 px-3.5 !rounded-full whitespace-nowrap shrink-0 font-semibold text-xs"
                 >
-                  <Code2 className="w-3.5 h-3.5 text-[#7DD3FC]" aria-hidden="true" />
-                  AI 脚本工坊
+                  <Code2 className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+                  <span>AI工坊</span>
                   {customBotScripts.length > 0 && (
-                    <span className="font-mono-num text-[11px] text-[#7DD3FC]">
+                    <span className="font-mono-num text-[11px] text-[var(--accent)]">
                       ({customBotScripts.length})
                     </span>
                   )}
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
-                onClick={() => onEnterSettings(primaryPlayableGame.id)}
-                className={`inline-flex items-center gap-1.5 text-xs font-semibold text-[#E2E8F0] bg-white/[0.07] hover:bg-white/[0.14] border border-white/12 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC] focus-visible:outline-offset-2 ${
-                  isCompactLandscape ? 'px-2.5 py-1.5' : 'px-3.5 py-2'
-                }`}
+
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="lobby-enter-settings-btn"
+                onPress={() => onEnterSettings(primaryPlayableGame.id)}
+                className="h-9 px-3.5 !rounded-full whitespace-nowrap shrink-0 font-semibold text-xs"
               >
                 <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
-                {isCompactLandscape
-                  ? '规则设置'
-                  : gameMode === 'single'
-                  ? '单人规则与 AI 设置'
-                  : gameMode === 'brawl'
-                  ? 'AI 乱斗规则与阵容'
-                  : '多人规则与按键设置'}
-              </button>
+                <span>
+                  {isCompactLandscape
+                    ? '设置'
+                    : gameMode === 'single'
+                    ? '单人设置'
+                    : gameMode === 'brawl'
+                    ? '乱斗设置'
+                    : '设置中心'}
+                </span>
+              </Button>
             </div>
           )}
         </div>
@@ -315,15 +327,17 @@ export function LobbyView({
             isCompactLandscape ? 'w-[148px]' : 'w-[206px] xl:w-[224px]'
           } shrink-0 flex flex-col items-center`}
         >
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth
             aria-label="上一个游戏"
-            disabled={!canGoUp}
-            onClick={() => stepSelection(-1)}
-            className="w-full h-9 rounded-lg border border-white/12 bg-[#0B1226]/85 hover:bg-[#142042] hover:border-[#7DD3FC]/40 disabled:opacity-30 disabled:hover:bg-[#0B1226]/85 disabled:hover:border-white/12 disabled:cursor-not-allowed flex items-center justify-center text-[#CBD5E1] hover:text-white transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-[#7DD3FC]"
+            isDisabled={!canGoUp}
+            onPress={() => stepSelection(-1)}
+            className="h-9 shrink-0"
           >
             <ChevronUp className="w-4 h-4" aria-hidden="true" />
-          </button>
+          </Button>
 
           {/* 录像带胶片视口 */}
           <div
@@ -331,12 +345,15 @@ export function LobbyView({
             data-testid="lobby-game-reel"
             role="listbox"
             aria-label="选择游戏"
-            className="relative flex-1 min-h-0 w-full my-2.5 rounded-xl border border-white/[0.1] bg-[#070C1C]/82 overflow-hidden"
+            className={`relative flex-1 min-h-0 w-full my-2.5 rounded-xl border overflow-hidden ${
+              isDark
+                ? 'border-white/[0.1] bg-[#070C1C]/82'
+                : 'border-[var(--border)] bg-[var(--surface)]/92 shadow-inner'
+            }`}
           >
-            {/* 左侧与右侧胶片齿孔轨道（录像带质感） */}
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-y-2 left-1.5 w-2 opacity-40"
+              className="pointer-events-none absolute inset-y-2 left-1.5 w-2 opacity-35"
               style={{
                 backgroundImage:
                   'repeating-linear-gradient(to bottom, rgba(148,163,184,0.65) 0px, rgba(148,163,184,0.65) 6px, transparent 6px, transparent 15px)',
@@ -344,29 +361,27 @@ export function LobbyView({
             />
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-y-2 right-1.5 w-2 opacity-40"
+              className="pointer-events-none absolute inset-y-2 right-1.5 w-2 opacity-35"
               style={{
                 backgroundImage:
                   'repeating-linear-gradient(to bottom, rgba(148,163,184,0.65) 0px, rgba(148,163,184,0.65) 6px, transparent 6px, transparent 15px)',
               }}
             />
 
-            {/* 固定在垂直正中央的星光选框（方框框选当前游戏） */}
+            {/* 固定在垂直正中央的选框 */}
             <div
               data-testid="reel-selection-frame"
               aria-hidden="true"
               className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 ${
                 isCompactLandscape ? 'w-[126px]' : 'w-[166px] xl:w-[178px]'
-              } h-[112px] rounded-lg border border-[#7DD3FC]/80 shadow-[0_0_26px_rgba(125,211,252,0.24)]`}
+              } h-[112px] rounded-lg border-2 border-[var(--accent)]`}
             >
-              {/* 四角星标取景角括弧 */}
-              <span className="absolute -top-[2px] -left-[2px] w-3.5 h-3.5 border-t-2 border-l-2 border-[#F5C469] rounded-tl-sm" />
-              <span className="absolute -top-[2px] -right-[2px] w-3.5 h-3.5 border-t-2 border-r-2 border-[#F5C469] rounded-tr-sm" />
-              <span className="absolute -bottom-[2px] -left-[2px] w-3.5 h-3.5 border-b-2 border-l-2 border-[#F5C469] rounded-bl-sm" />
-              <span className="absolute -bottom-[2px] -right-[2px] w-3.5 h-3.5 border-b-2 border-r-2 border-[#F5C469] rounded-br-sm" />
+              <span className="absolute -top-[2px] -left-[2px] w-3.5 h-3.5 border-t-2 border-l-2 border-[var(--accent)] rounded-tl-sm" />
+              <span className="absolute -top-[2px] -right-[2px] w-3.5 h-3.5 border-t-2 border-r-2 border-[var(--accent)] rounded-tr-sm" />
+              <span className="absolute -bottom-[2px] -left-[2px] w-3.5 h-3.5 border-b-2 border-l-2 border-[var(--accent)] rounded-bl-sm" />
+              <span className="absolute -bottom-[2px] -right-[2px] w-3.5 h-3.5 border-b-2 border-r-2 border-[var(--accent)] rounded-br-sm" />
             </div>
 
-            {/* 竖向平滑滚动胶片轨道（锚定容器正中，令 activeIndex 精准对齐中央方框） */}
             <div
               className="absolute inset-x-0 top-1/2"
               style={{ marginTop: -REEL_ITEM_HEIGHT_PX / 2 }}
@@ -378,13 +393,12 @@ export function LobbyView({
                   transform: `translate3d(0, ${trackOffsetY}px, 0)`,
                 }}
               >
-                {/* 磁带片头微弱星轨引带（平衡第一项居中的视觉留白） */}
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute -top-[92px] w-[152px] xl:w-[164px] h-[72px] rounded-md border border-dashed border-white/[0.08] flex flex-col items-center justify-center gap-1 text-[10px] text-[#64748B]"
+                  className="pointer-events-none absolute -top-[92px] w-[152px] xl:w-[164px] h-[72px] rounded-md border border-dashed border-[var(--border)] flex flex-col items-center justify-center gap-1 text-[10px] text-[var(--muted)]"
                 >
                   <span className="font-mono-num tracking-widest">REEL START</span>
-                  <span className="w-8 h-px bg-white/10" />
+                  <span className="w-8 h-px bg-[var(--border)]" />
                 </div>
 
                 {catalog.map((item, idx) => {
@@ -402,10 +416,10 @@ export function LobbyView({
                       style={{ height: REEL_ITEM_HEIGHT_PX }}
                       className={`relative ${
                         isCompactLandscape ? 'w-[118px]' : 'w-[156px] xl:w-[168px]'
-                      } rounded-md overflow-hidden border bg-[#0C1429] text-left cursor-pointer shrink-0 transition-[transform,opacity,border-color] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] focus-visible:outline-2 focus-visible:outline-[#F5C469] ${
+                      } rounded-md overflow-hidden border bg-[#0C1429] text-left cursor-pointer shrink-0 transition-[transform,opacity,border-color] duration-200 ${
                         isSelected
-                          ? 'scale-100 opacity-100 border-white/25'
-                          : 'scale-[0.9] opacity-55 hover:opacity-88 hover:scale-[0.94] border-white/12'
+                          ? 'scale-100 opacity-100 border-white/30'
+                          : 'scale-[0.9] opacity-60 hover:opacity-90 hover:scale-[0.94] border-white/15'
                       }`}
                     >
                       {!imgFailed ? (
@@ -425,14 +439,13 @@ export function LobbyView({
                         />
                       )}
 
-                      {/* 底部柔黑遮罩，保证片名与序号高对比度清晰可读 */}
                       <div className="absolute inset-0 bg-gradient-to-t from-[#040712]/92 via-[#040712]/25 to-transparent" />
 
                       <div className="absolute inset-x-0 bottom-0 px-2.5 py-2 flex items-end justify-between gap-1.5">
                         <span className="text-xs font-bold text-white leading-tight truncate">
                           {item.title}
                         </span>
-                        <span className="font-mono-num text-[10px] font-semibold text-[#94A3B8] shrink-0">
+                        <span className="font-mono-num text-[10px] font-semibold text-[#CBD5E1] shrink-0">
                           {String(idx + 1).padStart(2, '0')}
                         </span>
                       </div>
@@ -440,40 +453,51 @@ export function LobbyView({
                   );
                 })}
 
-                {/* 磁带片尾微弱星轨标记 */}
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none w-[152px] xl:w-[164px] h-[72px] rounded-md border border-dashed border-white/[0.08] flex flex-col items-center justify-center gap-1 text-[10px] text-[#64748B]"
+                  className="pointer-events-none w-[152px] xl:w-[164px] h-[72px] rounded-md border border-dashed border-[var(--border)] flex flex-col items-center justify-center gap-1 text-[10px] text-[var(--muted)]"
                 >
-                  <span className="w-8 h-px bg-white/10" />
+                  <span className="w-8 h-px bg-[var(--border)]" />
                   <span className="font-mono-num tracking-widest">MORE SOON</span>
                 </div>
               </div>
             </div>
 
-            {/* 顶部与底部深空渐隐遮罩 */}
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-[#070C1C] via-[#070C1C]/70 to-transparent z-10"
+              className={`pointer-events-none absolute inset-x-0 top-0 h-14 z-10 bg-gradient-to-b ${
+                isDark
+                  ? 'from-[#070C1C] via-[#070C1C]/70 to-transparent'
+                  : 'from-[var(--surface)] via-[var(--surface)]/75 to-transparent'
+              }`}
             />
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-[#070C1C] via-[#070C1C]/70 to-transparent z-10"
+              className={`pointer-events-none absolute inset-x-0 bottom-0 h-14 z-10 bg-gradient-to-t ${
+                isDark
+                  ? 'from-[#070C1C] via-[#070C1C]/70 to-transparent'
+                  : 'from-[var(--surface)] via-[var(--surface)]/75 to-transparent'
+              }`}
             />
           </div>
 
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth
             aria-label="下一个游戏"
-            disabled={!canGoDown}
-            onClick={() => stepSelection(1)}
-            className="w-full h-9 rounded-lg border border-white/12 bg-[#0B1226]/85 hover:bg-[#142042] hover:border-[#7DD3FC]/40 disabled:opacity-30 disabled:hover:bg-[#0B1226]/85 disabled:hover:border-white/12 disabled:cursor-not-allowed flex items-center justify-center text-[#CBD5E1] hover:text-white transition-colors cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-[#7DD3FC]"
+            isDisabled={!canGoDown}
+            onPress={() => stepSelection(1)}
+            className="h-9 shrink-0"
           >
             <ChevronDown className="w-4 h-4" aria-hidden="true" />
-          </button>
+          </Button>
 
-          <div className="mt-2 flex items-center gap-2 text-[11px] text-[#94A3B8]">
-            <span data-testid="reel-index-indicator" className="font-mono-num font-semibold text-[#E2E8F0]">
+          <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--muted)]">
+            <span
+              data-testid="reel-index-indicator"
+              className="font-mono-num font-semibold text-[var(--foreground)]"
+            >
               {String(safeIndex + 1).padStart(2, '0')} / {String(catalog.length).padStart(2, '0')}
             </span>
             <span aria-hidden="true">·</span>
@@ -481,293 +505,162 @@ export function LobbyView({
           </div>
         </aside>
 
-        {/* 中右侧：当前选中游戏的详细信息、单人/多人模式切换、AI 难度快选与启动入口 */}
+        {/* 中栏：当前选中游戏详情、模式切换与启动入口（顶部与左侧录像带胶片区齐平，不含上滚动按钮） */}
         <section
           aria-label="当前选中游戏详情"
           className={`${
             isCompactLandscape
-              ? 'w-[270px] overflow-y-auto pr-1 justify-start'
-              : 'w-[324px] xl:w-[372px] justify-center'
-          } shrink-0 flex flex-col min-w-0`}
+              ? 'w-[280px] pr-1'
+              : 'w-[340px] xl:w-[388px] pr-1'
+          } shrink-0 flex flex-col justify-start pt-[46px] overflow-y-auto min-w-0`}
         >
           {activeEntry && (
             <div
               key={activeEntry.id}
-              className={`animate-cosmic-enter ${isCompactLandscape ? 'space-y-2.5 py-0.5' : 'space-y-4'}`}
+              className={`animate-cosmic-enter ${
+                isCompactLandscape ? 'space-y-2.5 pb-1' : 'space-y-4 pb-2'
+              }`}
             >
               <div className="space-y-1">
                 <div className="flex items-center gap-2 text-xs font-semibold">
-                  <span
-                    className={
-                      activeEntry.playable ? 'text-[#7DD3FC]' : 'text-[#F5C469]'
-                    }
-                  >
-                    {activeEntry.statusText}
-                  </span>
-                  <span aria-hidden="true" className="text-[#475569]">
+                  <span className="text-[var(--accent)]">{activeEntry.statusText}</span>
+                  <span aria-hidden="true" className="text-[var(--muted)]">
                     ·
                   </span>
-                  <span className="font-mono-num text-[#94A3B8]">
+                  <span className="font-mono-num text-[var(--muted)]">
                     NO.{String(safeIndex + 1).padStart(2, '0')}
                   </span>
                 </div>
 
                 <h1
                   data-testid="active-game-title"
-                  className={`font-display font-extrabold tracking-tight text-white leading-[1.12] text-balance ${
+                  className={`font-display font-extrabold tracking-tight leading-[1.12] text-balance ${
                     isCompactLandscape ? 'text-2xl' : 'text-3xl xl:text-[36px]'
-                  }`}
+                  } ${isDark ? 'text-white' : 'text-[var(--foreground)]'}`}
                 >
                   {activeEntry.title}
                 </h1>
 
                 {!isCompactLandscape && (
-                  <p className="text-xs font-medium tracking-wide text-[#94A3B8]">
+                  <p className="text-xs font-medium tracking-wide text-[var(--muted)]">
                     {activeEntry.englishSubtitle}
                   </p>
                 )}
-
-                {/* 纯文本分隔元数据 */}
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5 text-xs text-[#CBD5E1]">
-                  {activeEntry.metaItems.map((meta, mIdx) => {
-                    const displayMeta =
-                      activeEntry.playable && mIdx === 0
-                        ? gameMode === 'brawl'
-                          ? '2–8 席 AI 乱斗'
-                          : gameMode === 'single'
-                          ? '单人人机 / AI 观战'
-                          : meta
-                        : meta;
-                    return (
-                      <span key={`${mIdx}-${displayMeta}`} className="inline-flex items-center gap-2">
-                        {mIdx > 0 && (
-                          <span aria-hidden="true" className="text-[#475569]">
-                            ·
-                          </span>
-                        )}
-                        <span>{displayMeta}</span>
-                      </span>
-                    );
-                  })}
-                </div>
               </div>
 
-              <p className="text-[13px] leading-relaxed text-[#CBD5E1]">
+              <p className="text-[13px] leading-relaxed text-[var(--foreground)]/85">
                 {activeEntry.description}
               </p>
 
-              {/* 单人游戏 / 多人游戏 / AI 乱斗 三段模式切换 */}
+              {/* HeroUI 三段药丸模式切换 */}
               {activeEntry.playable && (
-                <div className="space-y-2.5 pt-1">
-                  <div
-                    role="tablist"
-                    aria-label="选择游戏模式"
-                    className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-[#0B1226]/92 border border-white/12"
-                  >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={gameMode === 'single'}
-                      data-testid="lobby-mode-single"
-                      onClick={() => onGameModeChange('single')}
-                      className={`flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                        gameMode === 'single'
-                          ? 'bg-[#17264A] text-white border border-[#7DD3FC]/55 shadow-[0_0_16px_rgba(125,211,252,0.16)]'
-                          : 'text-[#94A3B8] hover:text-white border border-transparent'
-                      }`}
-                    >
-                      <Bot className="w-3.5 h-3.5 text-[#7DD3FC] shrink-0" aria-hidden="true" />
-                      单人游戏
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={gameMode === 'multi'}
-                      data-testid="lobby-mode-multi"
-                      onClick={() => onGameModeChange('multi')}
-                      className={`flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                        gameMode === 'multi'
-                          ? 'bg-[#17264A] text-white border border-[#F5C469]/55 shadow-[0_0_16px_rgba(245,196,105,0.14)]'
-                          : 'text-[#94A3B8] hover:text-white border border-transparent'
-                      }`}
-                    >
-                      <Users className="w-3.5 h-3.5 text-[#F5C469] shrink-0" aria-hidden="true" />
-                      多人游戏
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={gameMode === 'brawl'}
-                      data-testid="lobby-mode-brawl"
-                      onClick={() => onGameModeChange('brawl')}
-                      className={`flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                        gameMode === 'brawl'
-                          ? 'bg-[#29193A] text-white border border-[#C084FC]/55 shadow-[0_0_16px_rgba(192,132,252,0.18)]'
-                          : 'text-[#94A3B8] hover:text-white border border-transparent'
-                      }`}
-                    >
-                      <Swords className="w-3.5 h-3.5 text-[#C084FC] shrink-0" aria-hidden="true" />
-                      AI 乱斗
-                    </button>
-                  </div>
+                <div className="space-y-3 pt-1">
+                  <ModeTabs
+                    gameMode={gameMode}
+                    onChange={onGameModeChange}
+                    testIdPrefix="lobby"
+                    compact
+                    className="w-full"
+                  />
 
-                  {/* 单人模式：AI 脚本模型快选（内置 + 自定义脚本库） */}
-                  {gameMode === 'single' && botModels.length > 0 && (
-                    <div
-                      data-testid="lobby-ai-quick-picker"
-                      className="rounded-xl border border-white/10 bg-[#080F22]/86 p-2.5 space-y-2"
-                    >
-                      <div className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="font-semibold text-[#CBD5E1]">
-                          AI 对手脚本
-                        </span>
-                        <div className="flex items-center gap-2.5">
-                          <button
-                            type="button"
+                  {/* 单人模式：AI 对手 Select + 放大观战与工坊按钮 */}
+                  {gameMode === 'single' && botModels.length > 0 && (() => {
+                    const aiGroups: SelectOptionGroup[] = [];
+                    if (customBotScripts.length > 0) {
+                      aiGroups.push({
+                        title: '自定义 AI 脚本',
+                        options: customBotScripts.map((s) => ({
+                          value: `custom:${s.id}`,
+                          label: `[自定义] ${s.name}`,
+                        })),
+                      });
+                    }
+                    aiGroups.push({
+                      title: '内置 AI 模型',
+                      options: botModels.map((m) => ({
+                        value: m.id,
+                        label:
+                          m.isBoss || m.difficultyLevel === 5
+                            ? `[BOSS Lv.${m.difficultyLevel}] ${m.name}`
+                            : `[Lv.${m.difficultyLevel}] ${m.name} · ${m.difficultyLabel}`,
+                      })),
+                    });
+                    const currentAiValue =
+                      selectedOpponent?.source === 'custom'
+                        ? `custom:${selectedOpponent.modelId}`
+                        : selectedOpponent?.modelId ?? botModels[1]?.id ?? botModels[0].id;
+
+                    return (
+                      <div
+                        data-testid="lobby-ai-quick-picker"
+                        className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/92 p-3 space-y-2.5"
+                      >
+                        <AppSelect
+                          ariaLabel="选择单人 AI 对手"
+                          label="AI 对手"
+                          testId="lobby-ai-opponent-select"
+                          value={currentAiValue}
+                          groups={aiGroups}
+                          onChange={(val) => onAiModelChange('p2', val)}
+                        />
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant={singleMatchup === 'ai_vs_ai' ? 'primary' : 'secondary'}
+                            size="sm"
                             data-testid="lobby-matchup-toggle"
-                            onClick={() =>
+                            onPress={() =>
                               onSingleMatchupChange(
                                 singleMatchup === 'human_vs_ai' ? 'ai_vs_ai' : 'human_vs_ai'
                               )
                             }
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#7DD3FC] hover:text-[#BAE6FD] transition-colors cursor-pointer"
+                            className={`flex-1 h-9 px-3.5 text-xs font-semibold whitespace-nowrap ${
+                              singleMatchup === 'ai_vs_ai' ? 'accent-solid-btn' : ''
+                            }`}
                           >
-                            <Eye className="w-3 h-3" aria-hidden="true" />
-                            {singleMatchup === 'ai_vs_ai' ? 'AI 观战' : '切换观战'}
-                          </button>
+                            <Eye className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                            {singleMatchup === 'ai_vs_ai' ? 'AI 观战中' : '切换观战'}
+                          </Button>
                           {activePlayableGame?.aiSdk && (
-                            <button
-                              type="button"
-                              onClick={() => onOpenAiStudio(activePlayableGame.id, 'editor')}
-                              className="text-[11px] font-semibold text-[#F5C469] hover:text-[#FDE68A] transition-colors cursor-pointer"
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              data-testid="lobby-ai-card-studio-btn"
+                              onPress={() => onOpenAiStudio(activePlayableGame.id, 'editor')}
+                              className="flex-1 h-9 px-3.5 text-xs font-semibold whitespace-nowrap"
                             >
-                              + 工坊
-                            </button>
+                              <Code2 className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" aria-hidden="true" />
+                              AI工坊
+                            </Button>
                           )}
                         </div>
                       </div>
+                    );
+                  })()}
 
-                      <div className="grid grid-cols-2 gap-1.5 max-h-[116px] overflow-y-auto pr-0.5">
-                        {botModels.map((model) => {
-                          const selected =
-                            selectedOpponent?.source === 'builtin' &&
-                            model.id === selectedOpponent.modelId;
-                          const isBoss = Boolean(model.isBoss || model.difficultyLevel === 5);
-                          return (
-                            <button
-                              key={model.id}
-                              type="button"
-                              data-testid={`lobby-ai-model-${model.id}`}
-                              aria-pressed={selected}
-                              onClick={() => onAiModelChange('p2', model.id)}
-                              style={
-                                isBoss
-                                  ? {
-                                      backgroundColor: selected
-                                        ? BOSS_TIER_THEME.bgSoftHex
-                                        : BOSS_TIER_THEME.bgHex,
-                                      borderColor: selected
-                                        ? '#F43F5E'
-                                        : BOSS_TIER_THEME.borderHex,
-                                      color: BOSS_TIER_THEME.textHex,
-                                    }
-                                  : undefined
-                              }
-                              className={`flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                                isBoss
-                                  ? 'shadow-xs'
-                                  : selected
-                                  ? 'bg-white/[0.11] border-white/35 text-white'
-                                  : 'bg-white/[0.03] border-white/[0.08] text-[#94A3B8] hover:bg-white/[0.07] hover:text-[#E2E8F0]'
-                              }`}
-                            >
-                              <span className="flex items-center gap-1.5 min-w-0">
-                                <span
-                                  className="w-2 h-2 rounded-xs shrink-0"
-                                  style={{ backgroundColor: model.accentColor }}
-                                  aria-hidden="true"
-                                />
-                                <span className="text-[11px] font-bold truncate">
-                                  {model.name}
-                                </span>
-                              </span>
-                              <span
-                                className="font-mono-num text-[10px] font-semibold shrink-0"
-                                style={isBoss ? { color: '#FB7185' } : undefined}
-                              >
-                                {isBoss ? `BOSS Lv.${model.difficultyLevel}` : `Lv.${model.difficultyLevel}`}
-                              </span>
-                            </button>
-                          );
-                        })}
-                        {customBotScripts.map((script) => {
-                          const selected =
-                            selectedOpponent?.source === 'custom' &&
-                            script.id === selectedOpponent.modelId;
-                          return (
-                            <button
-                              key={script.id}
-                              type="button"
-                              data-testid={`lobby-ai-custom-${script.id}`}
-                              aria-pressed={selected}
-                              onClick={() => onAiModelChange('p2', `custom:${script.id}`)}
-                              className={`flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border text-left transition-colors cursor-pointer ${
-                                selected
-                                  ? 'bg-[#1A2D4F] border-[#7DD3FC]/65 text-white'
-                                  : 'bg-white/[0.04] border-[#7DD3FC]/20 text-[#CBD5E1] hover:bg-white/[0.08] hover:text-white'
-                              }`}
-                            >
-                              <span className="flex items-center gap-1.5 min-w-0">
-                                <span
-                                  className="w-2 h-2 rounded-xs shrink-0"
-                                  style={{ backgroundColor: script.defaultColorHex }}
-                                  aria-hidden="true"
-                                />
-                                <span className="text-[11px] font-bold truncate">
-                                  {script.name}
-                                </span>
-                              </span>
-                              <span className="text-[10px] font-semibold text-[#7DD3FC] shrink-0">
-                                自定义
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {selectedOpponent && (
-                        <p className="text-[11px] leading-snug text-[#94A3B8] line-clamp-1">
-                          {selectedOpponent.summary}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* AI 乱斗模式：2～8 席规模快选 + 当前参赛选手预览 */}
+                  {/* AI 乱斗模式：2～8 席规模快选 */}
                   {gameMode === 'brawl' && (
                     <div
                       data-testid="lobby-brawl-summary"
-                      className="rounded-xl border border-[#C084FC]/25 bg-[#0D1025]/90 p-2.5 space-y-2"
+                      className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/92 p-2.5 space-y-2"
                     >
                       <div className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="font-semibold text-[#E9D5FF]">
+                        <span className="font-bold text-[var(--foreground)]">
                           多 AI 混战席位（<span className="font-mono-num">{arenaSeats.length}</span> 席）
                         </span>
                         <div className="flex items-center gap-1">
                           {[2, 4, 6, 8].map((n) => (
-                            <button
+                            <Button
                               key={n}
-                              type="button"
+                              size="sm"
+                              variant={arenaSeats.length === n ? 'primary' : 'secondary'}
                               data-testid={`lobby-brawl-count-${n}`}
-                              onClick={() => onQuickSetArenaSeatCount(n)}
-                              className={`px-1.5 py-0.5 rounded font-mono-num text-[10px] font-bold transition-colors cursor-pointer ${
-                                arenaSeats.length === n
-                                  ? 'bg-[#C084FC] text-[#0B0F1E]'
-                                  : 'bg-white/[0.07] text-[#CBD5E1] hover:bg-white/[0.15]'
+                              onPress={() => onQuickSetArenaSeatCount(n)}
+                              className={`h-6 min-w-0 px-2 font-mono-num text-[10px] font-bold ${
+                                arenaSeats.length === n ? 'accent-solid-btn' : ''
                               }`}
                             >
                               {n}席
-                            </button>
+                            </Button>
                           ))}
                         </div>
                       </div>
@@ -786,7 +679,7 @@ export function LobbyView({
                           return (
                             <span
                               key={seat.slotId}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/[0.06] border border-white/10 text-[11px] text-[#E2E8F0] max-w-[106px]"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--surface-secondary)] border border-[var(--border)] text-[11px] text-[var(--foreground)] max-w-[106px]"
                             >
                               <span
                                 className="w-2 h-2 rounded-xs shrink-0"
@@ -798,80 +691,81 @@ export function LobbyView({
                         })}
                       </div>
 
-                      <p className="text-[11px] text-[#94A3B8] leading-snug">
-                        在独立 Worker 沙箱内让多个大模型脚本与内置 AI 同台竞技，点击「配置阵容」可逐席选色与选模型。
+                      <p className="text-[11px] text-[var(--muted)] leading-snug">
+                        在独立 Worker 沙箱内让多个大模型脚本与内置 AI 同台竞技，点击「配置乱斗阵容」可逐席选色与选模型。
                       </p>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* 核心玩法要点（桌面展示，紧凑手机横屏隐藏以优先保证操作按钮可及） */}
+              {/* 核心玩法要点（已去除操控模式行） */}
               {!isCompactLandscape && (
-                <dl className="pt-3 border-t border-white/10 space-y-2 text-xs">
-                  {(activeEntry.playable && gameMode !== 'multi'
-                    ? activeEntry.highlights.slice(0, 2)
-                    : activeEntry.highlights
-                  ).map((hl) => (
-                    <div key={hl.label} className="grid grid-cols-12 gap-2 items-baseline">
-                      <dt className="col-span-3 font-semibold text-[#94A3B8] whitespace-nowrap">
-                        {hl.label}
-                      </dt>
-                      <dd className="col-span-9 text-[#E2E8F0] leading-relaxed">
-                        {hl.value}
-                      </dd>
-                    </div>
-                  ))}
+                <dl className="pt-3 border-t border-[var(--separator)] space-y-2 text-xs">
+                  {activeEntry.highlights
+                    .filter((hl) => hl.label !== '操控模式')
+                    .map((hl) => (
+                      <div key={hl.label} className="grid grid-cols-12 gap-2 items-baseline">
+                        <dt className="col-span-3 font-semibold text-[var(--muted)] whitespace-nowrap">
+                          {hl.label}
+                        </dt>
+                        <dd className="col-span-9 text-[var(--foreground)]/90 leading-relaxed">
+                          {hl.value}
+                        </dd>
+                      </div>
+                    ))}
                 </dl>
               )}
 
-              {/* 操作按钮区 */}
+              {/* HeroUI 操作按钮区 */}
               {activeEntry.playable ? (
-                <div className="pt-1 flex flex-wrap items-center gap-2.5">
-                  <button
-                    type="button"
+                <div className="pt-1 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="primary"
+                    size="md"
                     data-start="true"
-                    onClick={() => onEnterPreMatch(activeEntry.id)}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-[#E85D3F] hover:bg-[#F26E52] rounded-lg shadow-[0_8px_24px_rgba(232,93,63,0.34)] transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#F5C469] focus-visible:outline-offset-2"
+                    onPress={() => onEnterPreMatch(activeEntry.id)}
+                    className="min-h-[42px] px-5 font-bold whitespace-nowrap shrink-0 accent-solid-btn"
                   >
                     <Play className="w-4 h-4 fill-current" aria-hidden="true" />
                     {gameMode === 'brawl' ? '配置乱斗阵容' : '开始游戏'}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="md"
                     data-testid="lobby-quick-start-btn"
-                    onClick={() => onQuickStart(activeEntry.id)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-[#F8FAFC] bg-white/[0.09] hover:bg-white/[0.16] border border-white/15 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC]"
+                    onPress={() => onQuickStart(activeEntry.id)}
+                    className="min-h-[42px] px-4 font-semibold whitespace-nowrap shrink-0"
                   >
-                    <Zap className="w-3.5 h-3.5 text-[#F5C469]" aria-hidden="true" />
+                    <Zap className="w-3.5 h-3.5 text-amber-500" aria-hidden="true" />
                     {gameMode === 'brawl'
-                      ? `立即 ${arenaSeats.length} 席乱斗`
+                      ? `快速 ${arenaSeats.length} 席乱斗`
                       : gameMode === 'single' && singleMatchup === 'ai_vs_ai'
                       ? '开始观战'
-                      : '立即开战'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onEnterSettings(activeEntry.id)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 text-sm font-semibold text-[#CBD5E1] hover:text-white hover:bg-white/[0.08] border border-white/12 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC]"
+                      : '快速对局'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onPress={() => onEnterSettings(activeEntry.id)}
+                    className="min-h-[42px] px-3.5 font-semibold whitespace-nowrap shrink-0"
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
                     设置
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div className="pt-2 space-y-3">
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => selectIndex(0)}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-[#F8FAFC] bg-white/[0.1] hover:bg-white/[0.18] border border-white/15 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#7DD3FC]"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-[#7DD3FC]" aria-hidden="true" />
-                      返回可玩游戏（坦克大战）
-                    </button>
-                  </div>
-                  <p className="text-xs text-[#94A3B8]">
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onPress={() => selectIndex(0)}
+                    className="min-h-[42px] font-semibold"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+                    返回可玩游戏（坦克大战）
+                  </Button>
+                  <p className="text-xs text-[var(--muted)]">
                     该作品处于实景动画预览阶段，当前可先体验《坦克大战》。
                   </p>
                 </div>
@@ -886,14 +780,18 @@ export function LobbyView({
           className="flex-1 min-w-0 flex flex-col justify-center"
         >
           {activeEntry && (
-            <div className="relative w-full h-full max-h-[580px] rounded-2xl overflow-hidden border border-white/12 bg-[#080E1E] shadow-[0_28px_72px_rgba(0,0,0,0.65)] flex flex-col">
-              {/* 顶部极简演示信息条（不遮挡画布） */}
-              <div className="shrink-0 px-4 py-2.5 border-b border-white/[0.08] bg-[#0B1226]/92 flex items-center justify-between gap-4 text-xs">
-                <span className="font-semibold text-[#F1F5F9] whitespace-nowrap">
-                  {activeEntry.playable ? '实机游玩示例' : '玩法预览动画'} ·{' '}
-                  {activeEntry.title}
+            <div className="relative w-full h-full max-h-[580px] rounded-2xl overflow-hidden border border-[var(--border)] bg-[#080E1E] shadow-xl flex flex-col">
+              <div
+                className={`shrink-0 px-4 py-2.5 border-b flex items-center justify-between gap-4 text-xs ${
+                  isDark
+                    ? 'border-white/[0.08] bg-[#0B1226]/92 text-[#F1F5F9]'
+                    : 'border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]'
+                }`}
+              >
+                <span className="font-semibold whitespace-nowrap">
+                  {activeEntry.playable ? '实机游玩示例' : '玩法预览动画'} · {activeEntry.title}
                 </span>
-                <span className="text-[#94A3B8] truncate">
+                <span className="text-[var(--muted)] truncate">
                   {activeEntry.playable && gameMode === 'brawl'
                     ? `AI 乱斗模式 · ${arenaSeats.length} 席模型同台混战`
                     : activeEntry.playable && gameMode === 'single'
@@ -904,7 +802,6 @@ export function LobbyView({
                 </span>
               </div>
 
-              {/* 完整大屏实时 Canvas 演示容器 */}
               <div className="relative flex-1 min-h-0 w-full bg-[#060B18]">
                 <LobbyShowcaseCanvas
                   key={activeEntry.id}
@@ -921,72 +818,31 @@ export function LobbyView({
         </section>
       </div>
 
-      {/* 底部单行键位与交互引导（矮屏手机横屏自动隐藏以释放更多画布高度） */}
+      {/* 底部精简提示条：仅保留切换游戏与暂停说明 */}
       {!isCompactLandscape && (
-        <footer className="relative z-10 shrink-0 px-6 lg:px-10 py-3 border-t border-white/[0.08] bg-[#050918]/72">
-          <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-4 text-xs text-[#94A3B8]">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              {isMobileOrTablet ? (
+        <footer
+          className={`relative z-10 shrink-0 px-6 lg:px-10 py-2.5 border-t ${
+            isDark
+              ? 'border-white/[0.08] bg-[#050918]/78'
+              : 'border-[var(--border)] bg-[var(--surface)]/92'
+          }`}
+        >
+          <div className="max-w-[1440px] mx-auto flex items-center gap-4 text-xs text-[var(--muted)]">
+            {isMobileOrTablet ? (
+              <span>
+                <strong className="text-[var(--foreground)]">触屏操控</strong> 左半屏浮动摇杆 · 右下独立开火
+              </span>
+            ) : (
+              <>
                 <span>
-                  <strong className="text-[#E2E8F0]">触屏操控</strong> 左半屏浮动摇杆指哪打哪 · 右下大按钮独立开火
+                  <strong className="text-[var(--foreground)]">↑ ↓ / 滚轮</strong> 切换游戏
                 </span>
-              ) : (
-                <>
-                  <span>
-                    <strong className="text-[#E2E8F0]">↑ ↓ / 滚轮</strong> 切换游戏
-                  </span>
-                  <span aria-hidden="true" className="text-[#475569]">
-                    ·
-                  </span>
-                  {gameMode === 'brawl' ? (
-                    <span>
-                      <strong className="text-[#C084FC]">AI 乱斗</strong> 支持 2～8 席大模型脚本与内置 AI 沙箱混战
-                    </span>
-                  ) : gameMode === 'single' ? (
-                    singleMatchup === 'ai_vs_ai' ? (
-                      <span>
-                        <strong className="text-[#7DD3FC]">AI 观战</strong> 双策略脚本自动对战
-                      </span>
-                    ) : (
-                      <>
-                        <span>
-                          <strong className="text-[#E2E8F0]">P1</strong> WASD 移动 + 空格 开火
-                        </span>
-                        <span aria-hidden="true" className="text-[#475569]">
-                          ·
-                        </span>
-                        <span>
-                          <strong className="text-[#7DD3FC]">AI 对手</strong>{' '}
-                          {selectedOpponent?.displayName ?? '战术游击'}（
-                          {selectedOpponent?.tierText ?? 'Lv.2'}）
-                        </span>
-                      </>
-                    )
-                  ) : (
-                    <>
-                      <span>
-                        <strong className="text-[#E2E8F0]">P1</strong> WASD 移动 + 空格 开火
-                      </span>
-                      <span aria-hidden="true" className="text-[#475569]">
-                        ·
-                      </span>
-                      <span>
-                        <strong className="text-[#E2E8F0]">P2</strong> 方向键 移动 + Enter 开火
-                      </span>
-                    </>
-                  )}
-                  <span aria-hidden="true" className="text-[#475569]">
-                    ·
-                  </span>
-                  <span>
-                    <strong className="text-[#E2E8F0]">Esc</strong> 暂停 / 继续
-                  </span>
-                </>
-              )}
-            </div>
-            <span className="text-[#64748B]">
-              单人 / 多人 / AI 乱斗规则独立保存 · 支持粘贴大模型 JS/TS 脚本沙箱对战
-            </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  <strong className="text-[var(--foreground)]">Esc</strong> 暂停 / 继续
+                </span>
+              </>
+            )}
           </div>
         </footer>
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Input, Tabs, TextArea } from '@heroui/react';
 import {
   AlertCircle,
   Check,
@@ -30,6 +31,7 @@ import {
 } from '../ai/customBotStore';
 import { validateCustomBotInWorker } from '../ai/workerSandbox';
 import { PLAYER_COLOR_PALETTE } from '../input/bindings';
+import { AppSwitch } from './heroUiHelpers';
 
 interface AiScriptStudioModalProps<TRules extends Record<string, unknown>> {
   game: GameDefinition<TRules, unknown>;
@@ -52,10 +54,7 @@ const UNTESTED_VALIDATION: BotValidationReport = {
 };
 
 /**
- * 跨游戏通用「AI 脚本工坊」工作台模态框：
- * - 规则说明 MD：一键复制或下载当前游戏的标准规则与接口说明书给大模型（可选附带当前对局自定义规则参数）
- * - 脚本编辑与试跑：直接粘贴大模型生成的 JS/TS 或 Markdown 回复，在独立 Web Worker 沙箱内进行 120 帧无头校验，
- *   验证通过（含死循环硬超时隔离）后保存为持久化自定义 AI 选手，通用于单人模式与多 AI 乱斗模式。
+ * HeroUI v3 跨游戏通用「AI 脚本工坊」工作台模态框（浅色 / 深色 / 强调色自适应）。
  */
 export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
   game,
@@ -72,7 +71,6 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
   const [includeCurrentRules, setIncludeCurrentRules] = useState(true);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
 
-  // 当前编辑的脚本草稿状态
   const [editingId, setEditingId] = useState<string | null>(() => scripts[0]?.id ?? null);
   const [draftName, setDraftName] = useState<string>(() => scripts[0]?.name ?? '');
   const [draftTier, setDraftTier] = useState<string>(() => scripts[0]?.tierLabel ?? '自定义');
@@ -252,7 +250,10 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
       return;
     }
     if (!draftCode.trim()) {
-      setFeedback({ tone: 'err', text: '脚本代码不能为空，请粘贴大模型生成的 JS/TS 代码或填入参考模板。' });
+      setFeedback({
+        tone: 'err',
+        text: '脚本代码不能为空，请粘贴大模型生成的 JS/TS 代码或填入参考模板。',
+      });
       return;
     }
 
@@ -298,56 +299,62 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
       aria-modal="true"
       aria-label="AI 脚本工坊"
       data-testid="ai-script-studio-modal"
-      className="fixed inset-0 z-50 bg-[#0B101D]/72 flex items-center justify-center p-2 sm:p-6"
+      className="fixed inset-0 z-50 bg-black/65 flex items-center justify-center p-2 sm:p-6"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="w-full max-w-[1220px] h-[min(92%,820px)] bg-[#FAF8F4] border border-[#CFC8B9] rounded-xl shadow-2xl flex flex-col overflow-hidden text-[#1C2127]">
+      <div className="w-full max-w-[1220px] h-[min(92%,820px)] bg-[var(--overlay)] border border-[var(--border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden text-[var(--foreground)]">
         {/* 顶部标题栏 */}
-        <header className="shrink-0 px-5 py-3.5 bg-[#222830] text-[#F5F2EB] flex items-center justify-between gap-4 border-b border-white/10">
+        <header className="shrink-0 px-5 py-3.5 bg-[var(--surface)] border-b border-[var(--border)] flex items-center justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Code2 className="w-4 h-4 text-[#7DD3FC] shrink-0" aria-hidden="true" />
+              <Code2 className="w-4 h-4 text-[var(--accent)] shrink-0" aria-hidden="true" />
               <h2 className="font-display text-base sm:text-lg font-extrabold tracking-tight truncate">
                 AI 脚本工坊 · {game.name}
               </h2>
               {aiSdk && (
-                <span className="text-[11px] font-mono-num text-[#94A3B8] whitespace-nowrap">
+                <span className="text-[11px] font-mono-num text-[var(--muted)] whitespace-nowrap">
                   SDK {aiSdk.schemaVersion}
                 </span>
               )}
             </div>
-            <p className="text-xs text-[#B6C0CC] mt-0.5 truncate">
+            <p className="text-xs text-[var(--muted)] mt-0.5 truncate">
               导出规则 MD 给任意大模型生成策略 · 粘贴 JS/TS 在独立 Worker 沙箱校验并复用至单人与乱斗
             </p>
           </div>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
+            isIconOnly
             data-testid="studio-close-btn"
-            onClick={onClose}
+            onPress={onClose}
             aria-label="关闭 AI 脚本工坊"
-            className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#F5F2EB] transition-colors shrink-0 cursor-pointer"
+            className="min-w-[36px] min-h-[36px] shrink-0"
           >
             <X className="w-4 h-4" aria-hidden="true" />
-          </button>
+          </Button>
         </header>
 
         {/* 主体双栏 */}
         <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12">
           {/* 左侧：持久化自定义 AI 脚本库 */}
-          <aside className="lg:col-span-4 border-b lg:border-b-0 lg:border-r border-[#DDD7C9] bg-[#F3EFE6] flex flex-col min-h-0">
-            <div className="shrink-0 p-3.5 border-b border-[#DDD7C9] space-y-2.5">
+          <aside className="lg:col-span-4 border-b lg:border-b-0 lg:border-r border-[var(--border)] bg-[var(--surface-secondary)]/55 flex flex-col min-h-0">
+            <div className="shrink-0 p-3.5 border-b border-[var(--border)] space-y-2.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-bold text-[#1C2127]">
+                <span className="text-xs font-bold text-[var(--foreground)]">
                   本地 AI 脚本库（<span className="font-mono-num">{scripts.length}</span>）
                 </span>
-                <button
-                  type="button"
+                <Button
+                  variant="primary"
+                  size="sm"
                   data-testid="studio-new-bot-btn"
-                  onClick={handleStartNew}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-white bg-[#D9432B] hover:bg-[#BE3620] rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  onPress={handleStartNew}
+                  className="min-h-[36px] whitespace-nowrap shrink-0 accent-solid-btn"
                 >
                   <Plus className="w-3.5 h-3.5" aria-hidden="true" />
                   新建 AI 脚本
-                </button>
+                </Button>
               </div>
 
               <div className="flex items-center gap-2">
@@ -358,30 +365,32 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                   onChange={handleImportFileChange}
                   className="hidden"
                 />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-[#2C333B] bg-white hover:bg-[#FAF8F4] border border-[#CFC8B9] rounded-md transition-colors cursor-pointer"
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onPress={() => fileInputRef.current?.click()}
+                  className="flex-1 min-h-[36px] text-[11px] font-semibold"
                 >
                   <Upload className="w-3 h-3" aria-hidden="true" />
                   导入 JSON
-                </button>
-                <button
-                  type="button"
-                  disabled={scripts.length === 0}
-                  onClick={handleExportJson}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-[#2C333B] bg-white hover:bg-[#FAF8F4] disabled:opacity-45 disabled:cursor-not-allowed border border-[#CFC8B9] rounded-md transition-colors cursor-pointer"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  isDisabled={scripts.length === 0}
+                  onPress={handleExportJson}
+                  className="flex-1 min-h-[36px] text-[11px] font-semibold"
                 >
                   <Download className="w-3 h-3" aria-hidden="true" />
                   导出 JSON
-                </button>
+                </Button>
               </div>
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
               {scripts.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-[#CFC8B9] bg-[#FAF8F4] p-4 space-y-2 text-xs text-[#55606C]">
-                  <p className="font-bold text-[#1C2127]">尚未保存自定义 AI 选手</p>
+                <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 space-y-2 text-xs text-[var(--muted)]">
+                  <p className="font-bold text-[var(--foreground)]">尚未保存自定义 AI 选手</p>
                   <ol className="list-decimal list-inside space-y-1 text-[11px] leading-relaxed">
                     <li>在右侧「规则说明 MD」一键复制给大模型</li>
                     <li>切到「脚本编辑与试跑」粘贴大模型返回的 JS/TS 代码</li>
@@ -396,10 +405,10 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                       key={item.id}
                       data-testid={`studio-script-item-${item.id}`}
                       onClick={() => loadScriptIntoEditor(item)}
-                      className={`rounded-lg border p-3 transition-colors cursor-pointer space-y-1.5 ${
+                      className={`rounded-xl border p-3 transition-colors cursor-pointer space-y-1.5 ${
                         selected
-                          ? 'bg-white border-[#1C2127] shadow-xs'
-                          : 'bg-[#FAF8F4] border-[#DDD7C9] hover:bg-white hover:border-[#BEB7A8]'
+                          ? 'bg-[var(--surface)] border-[var(--accent)] shadow-xs'
+                          : 'bg-[var(--surface)]/75 border-[var(--border)] hover:border-[var(--accent)]/50'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -409,50 +418,49 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                             style={{ backgroundColor: item.defaultColorHex }}
                             aria-hidden="true"
                           />
-                          <span className="text-xs font-bold text-[#1C2127] truncate">
+                          <span className="text-xs font-bold text-[var(--foreground)] truncate">
                             {item.name}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            title="复制为新脚本"
+                        <div
+                          className="flex items-center gap-1 shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            isIconOnly
                             aria-label={`复制 ${item.name}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDuplicate(item);
-                            }}
-                            className="p-1 text-[#5D6672] hover:text-[#1C2127] hover:bg-[#EFECE3] rounded cursor-pointer"
+                            onPress={() => handleDuplicate(item)}
+                            className="min-w-[28px] h-7 text-[var(--muted)]"
                           >
                             <CopyPlus className="w-3.5 h-3.5" aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            title="删除脚本"
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            isIconOnly
                             aria-label={`删除 ${item.name}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(item.id);
-                            }}
-                            className="p-1 text-[#5D6672] hover:text-[#B3261E] hover:bg-[#FDECE9] rounded cursor-pointer"
+                            onPress={() => handleDelete(item.id)}
+                            className="min-w-[28px] h-7 text-[var(--muted)] hover:text-red-500"
                           >
                             <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                          </button>
+                          </Button>
                         </div>
                       </div>
 
                       <div className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="text-[#5D6672] truncate">
+                        <span className="text-[var(--muted)] truncate">
                           {item.tierLabel}
                           {item.authorModel ? ` · ${item.authorModel}` : ''}
                         </span>
                         <span
                           className={`font-mono-num font-semibold shrink-0 ${
                             item.validation.status === 'verified'
-                              ? 'text-[#1F8A5B]'
+                              ? 'text-emerald-600 dark:text-emerald-400'
                               : item.validation.status === 'error'
-                              ? 'text-[#B3261E]'
-                              : 'text-[#68717D]'
+                              ? 'text-red-600 dark:text-red-400'
+                              : 'text-[var(--muted)]'
                           }`}
                         >
                           {item.validation.status === 'verified'
@@ -470,92 +478,84 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
           </aside>
 
           {/* 右侧：规则说明 MD / 脚本编辑与沙箱试跑 */}
-          <section className="lg:col-span-8 flex flex-col min-h-0 bg-[#FAF8F4]">
-            {/* Tab 切换栏 */}
-            <div className="shrink-0 px-5 pt-3.5 pb-2.5 border-b border-[#E3DDD0] flex flex-wrap items-center justify-between gap-3">
-              <div
-                className="flex items-center gap-1 p-1 bg-[#EAE5DA] rounded-lg"
-                role="tablist"
-                aria-label="工坊视图切换"
+          <section className="lg:col-span-8 flex flex-col min-h-0 bg-[var(--overlay)]">
+            <div className="shrink-0 px-5 pt-3.5 pb-2.5 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
+              <Tabs
+                selectedKey={activeTab}
+                onSelectionChange={(key) => setActiveTab(String(key) as 'prompt' | 'editor')}
               >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'prompt'}
-                  data-testid="studio-tab-prompt"
-                  onClick={() => setActiveTab('prompt')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-                    activeTab === 'prompt'
-                      ? 'bg-white text-[#1C2127] shadow-xs'
-                      : 'text-[#4F5864] hover:text-[#1C2127]'
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5" aria-hidden="true" />
-                  1. 规则说明 MD（给大模型）
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'editor'}
-                  data-testid="studio-tab-editor"
-                  onClick={() => setActiveTab('editor')}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-                    activeTab === 'editor'
-                      ? 'bg-white text-[#1C2127] shadow-xs'
-                      : 'text-[#4F5864] hover:text-[#1C2127]'
-                  }`}
-                >
-                  <Code2 className="w-3.5 h-3.5" aria-hidden="true" />
-                  2. 脚本粘贴、沙箱试跑与保存
-                </button>
-              </div>
+                <Tabs.ListContainer>
+                  <Tabs.List
+                    aria-label="工坊视图切换"
+                    className="bg-[var(--surface-secondary)] border border-[var(--border)] p-1 rounded-xl"
+                  >
+                    <Tabs.Tab
+                      id="prompt"
+                      data-testid="studio-tab-prompt"
+                      className="px-3 py-1.5 min-h-[36px] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+                      1. 规则说明 MD（给大模型）
+                      <Tabs.Indicator />
+                    </Tabs.Tab>
+                    <Tabs.Tab
+                      id="editor"
+                      data-testid="studio-tab-editor"
+                      className="px-3 py-1.5 min-h-[36px] text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      <Code2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      2. 脚本粘贴、沙箱试跑与保存
+                      <Tabs.Indicator />
+                    </Tabs.Tab>
+                  </Tabs.List>
+                </Tabs.ListContainer>
+              </Tabs>
 
               {activeTab === 'prompt' && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <label className="inline-flex items-center gap-1.5 text-xs font-medium text-[#3A424C] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      data-testid="studio-toggle-include-rules"
-                      checked={includeCurrentRules}
-                      onChange={(e) => setIncludeCurrentRules(e.target.checked)}
-                      className="w-3.5 h-3.5 accent-[#1C2127] rounded cursor-pointer"
-                    />
-                    <span>附带当前对局规则参数</span>
-                  </label>
-                  <button
-                    type="button"
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <AppSwitch
+                    ariaLabel="附带当前对局规则参数"
+                    testId="studio-toggle-include-rules"
+                    isSelected={includeCurrentRules}
+                    onChange={setIncludeCurrentRules}
+                    label="附带当前规则参数"
+                  />
+                  <Button
+                    variant="primary"
+                    size="sm"
                     data-testid="studio-copy-prompt-btn"
-                    onClick={handleCopyPrompt}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-[#222830] hover:bg-[#313A46] rounded-md transition-colors whitespace-nowrap cursor-pointer"
+                    onPress={handleCopyPrompt}
+                    className="min-h-[36px] whitespace-nowrap accent-solid-btn"
                   >
                     {copiedPrompt ? (
-                      <Check className="w-3.5 h-3.5 text-[#4ADE80]" aria-hidden="true" />
+                      <Check className="w-3.5 h-3.5" aria-hidden="true" />
                     ) : (
                       <Copy className="w-3.5 h-3.5" aria-hidden="true" />
                     )}
                     {copiedPrompt ? '已复制 MD' : '一键复制给大模型'}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     data-testid="studio-download-prompt-btn"
-                    onClick={handleDownloadPrompt}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#1C2127] bg-white hover:bg-[#F3EFE6] border border-[#CFC8B9] rounded-md transition-colors whitespace-nowrap cursor-pointer"
+                    onPress={handleDownloadPrompt}
+                    className="min-h-[36px] whitespace-nowrap"
                   >
                     <Download className="w-3.5 h-3.5" aria-hidden="true" />
                     下载 .md
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
 
             {activeTab === 'prompt' ? (
               <div className="flex-1 min-h-0 flex flex-col p-5 gap-3">
-                <p className="text-xs text-[#55606C]">
+                <p className="text-xs text-[var(--muted)]">
                   将下方标准 Markdown 完整发给任意大模型（Gemini、ChatGPT、Claude、DeepSeek 等），要求它直接输出策略代码，随后切到「脚本粘贴、沙箱试跑与保存」页签粘贴即可参战。
                 </p>
                 <pre
                   data-testid="studio-prompt-preview"
-                  className="flex-1 min-h-0 overflow-auto rounded-lg border border-[#D4CEC0] bg-[#141922] text-[#E6EDF5] p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap select-text"
+                  className="flex-1 min-h-0 overflow-auto rounded-xl border border-[var(--border)] bg-[#141922] text-[#E6EDF5] p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap select-text"
                 >
                   {promptMarkdown}
                 </pre>
@@ -566,10 +566,10 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                   <div
                     role="status"
                     data-testid="studio-feedback-banner"
-                    className={`flex items-start gap-2 px-3.5 py-2.5 rounded-lg border text-xs font-medium ${
+                    className={`flex items-start gap-2 px-3.5 py-2.5 rounded-xl border text-xs font-medium ${
                       feedback.tone === 'ok'
-                        ? 'bg-[#EAF7F1] border-[#A7DFC3] text-[#175B3D]'
-                        : 'bg-[#FDECE9] border-[#EAB5AC] text-[#9B2216]'
+                        ? 'bg-emerald-500/12 border-emerald-500/35 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-red-500/10 border-red-500/35 text-red-700 dark:text-red-300'
                     }`}
                   >
                     {feedback.tone === 'ok' ? (
@@ -586,11 +586,11 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                   <div className="sm:col-span-5 space-y-1">
                     <label
                       htmlFor="studio-bot-name"
-                      className="block text-xs font-semibold text-[#3A424C]"
+                      className="block text-xs font-semibold text-[var(--foreground)]"
                     >
                       AI 选手名称（1～16 字，支持中英文）
                     </label>
-                    <input
+                    <Input
                       id="studio-bot-name"
                       data-testid="studio-bot-name"
                       type="text"
@@ -598,17 +598,17 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                       value={draftName}
                       placeholder="例如：Gemini 雷神 / DeepSeek 刺客"
                       onChange={(e) => setDraftName(e.target.value)}
-                      className="w-full px-3 py-1.5 text-sm bg-white border border-[#CFC8B9] rounded-md text-[#1C2127] focus:outline-none focus:ring-2 focus:ring-[#1C2127]/20"
+                      className="w-full min-h-[40px] px-3 text-sm bg-[var(--field-background)] text-[var(--field-foreground)] border border-[var(--field-border)] rounded-lg"
                     />
                   </div>
                   <div className="sm:col-span-3 space-y-1">
                     <label
                       htmlFor="studio-bot-tier"
-                      className="block text-xs font-semibold text-[#3A424C]"
+                      className="block text-xs font-semibold text-[var(--foreground)]"
                     >
                       难度标签
                     </label>
-                    <input
+                    <Input
                       id="studio-bot-tier"
                       data-testid="studio-bot-tier"
                       type="text"
@@ -616,17 +616,17 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                       value={draftTier}
                       placeholder="自定义 / 大师"
                       onChange={(e) => setDraftTier(e.target.value)}
-                      className="w-full px-3 py-1.5 text-sm bg-white border border-[#CFC8B9] rounded-md text-[#1C2127] focus:outline-none focus:ring-2 focus:ring-[#1C2127]/20"
+                      className="w-full min-h-[40px] px-3 text-sm bg-[var(--field-background)] text-[var(--field-foreground)] border border-[var(--field-border)] rounded-lg"
                     />
                   </div>
                   <div className="sm:col-span-4 space-y-1">
                     <label
                       htmlFor="studio-bot-author"
-                      className="block text-xs font-semibold text-[#3A424C]"
+                      className="block text-xs font-semibold text-[var(--foreground)]"
                     >
                       来源模型备注（选填）
                     </label>
-                    <input
+                    <Input
                       id="studio-bot-author"
                       data-testid="studio-bot-author"
                       type="text"
@@ -634,7 +634,7 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                       value={draftAuthor}
                       placeholder="例如：Gemini 2.5 Pro"
                       onChange={(e) => setDraftAuthor(e.target.value)}
-                      className="w-full px-3 py-1.5 text-sm bg-white border border-[#CFC8B9] rounded-md text-[#1C2127] focus:outline-none focus:ring-2 focus:ring-[#1C2127]/20"
+                      className="w-full min-h-[40px] px-3 text-sm bg-[var(--field-background)] text-[var(--field-foreground)] border border-[var(--field-border)] rounded-lg"
                     />
                   </div>
                 </div>
@@ -642,7 +642,7 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                 {/* 默认涂装与简介 */}
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
                   <div className="sm:col-span-6 space-y-1.5">
-                    <span className="block text-xs font-semibold text-[#3A424C]">
+                    <span className="block text-xs font-semibold text-[var(--foreground)]">
                       默认涂装色
                     </span>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -656,9 +656,9 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                             data-testid={`studio-color-${opt.id}`}
                             aria-label={`选择涂装色 ${opt.label}`}
                             onClick={() => setDraftColor(opt.hex)}
-                            className={`w-7 h-7 rounded-md flex items-center justify-center transition-transform cursor-pointer ${
+                            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-transform cursor-pointer ${
                               selected
-                                ? 'ring-2 ring-offset-2 ring-[#1C2127] scale-105'
+                                ? 'ring-2 ring-offset-2 ring-[var(--foreground)] ring-offset-[var(--overlay)] scale-105'
                                 : 'hover:scale-105'
                             }`}
                             style={{ backgroundColor: opt.hex }}
@@ -674,18 +674,18 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                   <div className="sm:col-span-6 space-y-1">
                     <label
                       htmlFor="studio-bot-desc"
-                      className="block text-xs font-semibold text-[#3A424C]"
+                      className="block text-xs font-semibold text-[var(--foreground)]"
                     >
                       策略简介（选填）
                     </label>
-                    <input
+                    <Input
                       id="studio-bot-desc"
                       type="text"
                       maxLength={120}
                       value={draftDesc}
                       placeholder="简述该 AI 的打法风格，例如：偏向走位反打与抢激光"
                       onChange={(e) => setDraftDesc(e.target.value)}
-                      className="w-full px-3 py-1.5 text-sm bg-white border border-[#CFC8B9] rounded-md text-[#1C2127] focus:outline-none focus:ring-2 focus:ring-[#1C2127]/20"
+                      className="w-full min-h-[40px] px-3 text-sm bg-[var(--field-background)] text-[var(--field-foreground)] border border-[var(--field-border)] rounded-lg"
                     />
                   </div>
                 </div>
@@ -695,38 +695,40 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <label
                       htmlFor="studio-bot-code"
-                      className="text-xs font-semibold text-[#3A424C]"
+                      className="text-xs font-semibold text-[var(--foreground)]"
                     >
                       策略代码（可直接粘贴整段含 ```ts / ```js 代码块的大模型回复）
                     </label>
                     <div className="flex items-center gap-2">
                       {aiSdk && (
-                        <button
-                          type="button"
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           data-testid="studio-fill-template-btn"
-                          onClick={() => {
+                          onPress={() => {
                             setDraftCode(aiSdk.defaultTemplateCode);
                             setDraftValidation(UNTESTED_VALIDATION);
                             setFeedback(null);
                           }}
-                          className="px-2.5 py-1 text-[11px] font-semibold text-[#2C333B] bg-[#EAE5DA] hover:bg-[#DFD9CB] rounded transition-colors cursor-pointer"
+                          className="h-7 px-2.5 text-[11px]"
                         >
                           填入参考模板
-                        </button>
+                        </Button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => {
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onPress={() => {
                           setDraftCode('');
                           setDraftValidation(UNTESTED_VALIDATION);
                         }}
-                        className="px-2.5 py-1 text-[11px] font-semibold text-[#5D6672] hover:text-[#1C2127] bg-white border border-[#D8D2C5] rounded transition-colors cursor-pointer"
+                        className="h-7 px-2.5 text-[11px]"
                       >
                         清空
-                      </button>
+                      </Button>
                     </div>
                   </div>
-                  <textarea
+                  <TextArea
                     id="studio-bot-code"
                     data-testid="studio-bot-code"
                     spellCheck={false}
@@ -739,19 +741,19 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
                       }
                     }}
                     placeholder="在此粘贴大模型生成的 JS/TS 脚本（需导出 createBot(ctx) 或 decide(obs, state)）..."
-                    className="w-full rounded-lg border border-[#2C3440] bg-[#141922] text-[#E6EDF5] p-3.5 font-mono text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-[#7DD3FC]/40 resize-y"
+                    className="w-full rounded-xl border border-[var(--border)] bg-[#141922] text-[#E6EDF5] p-3.5 font-mono text-xs leading-relaxed resize-y"
                   />
                 </div>
 
                 {/* 沙箱校验报告区 */}
                 <div
                   data-testid="studio-validation-result"
-                  className={`rounded-lg border px-3.5 py-2.5 text-xs space-y-1 ${
+                  className={`rounded-xl border px-3.5 py-2.5 text-xs space-y-1 ${
                     draftValidation.status === 'verified'
-                      ? 'bg-[#EAF7F1] border-[#A7DFC3] text-[#175B3D]'
+                      ? 'bg-emerald-500/12 border-emerald-500/35 text-emerald-700 dark:text-emerald-300'
                       : draftValidation.status === 'error'
-                      ? 'bg-[#FDECE9] border-[#EAB5AC] text-[#9B2216]'
-                      : 'bg-[#EFECE3] border-[#D8D2C5] text-[#4A535E]'
+                      ? 'bg-red-500/10 border-red-500/35 text-red-700 dark:text-red-300'
+                      : 'bg-[var(--surface-secondary)] border-[var(--border)] text-[var(--muted)]'
                   }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2 font-bold">
@@ -793,31 +795,33 @@ export function AiScriptStudioModal<TRules extends Record<string, unknown>>({
 
                 {/* 底部校验与保存按钮 */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="md"
                     data-testid="studio-validate-btn"
-                    disabled={validating || !draftCode.trim() || !aiSdk}
-                    onClick={() => void handleValidate()}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-[#F5F2EB] bg-[#222830] hover:bg-[#313A46] disabled:opacity-45 disabled:cursor-not-allowed rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                    isDisabled={validating || !draftCode.trim() || !aiSdk}
+                    onPress={() => void handleValidate()}
+                    className="min-h-[42px] font-bold whitespace-nowrap"
                   >
                     {validating ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
                     ) : (
-                      <Play className="w-3.5 h-3.5 text-[#7DD3FC]" aria-hidden="true" />
+                      <Play className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
                     )}
                     {validating ? '正在 Worker 沙箱试跑…' : '沙箱试跑校验（120 帧）'}
-                  </button>
+                  </Button>
 
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="md"
                     data-testid="studio-save-btn"
-                    disabled={validating}
-                    onClick={handleSave}
-                    className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-[#D9432B] hover:bg-[#BE3620] disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                    isDisabled={validating}
+                    onPress={handleSave}
+                    className="min-h-[42px] px-5 font-bold whitespace-nowrap accent-solid-btn"
                   >
                     <Save className="w-3.5 h-3.5" aria-hidden="true" />
                     保存到本地 AI 脚本库
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { Button } from '@heroui/react';
 import {
   ArrowLeft,
   Bot,
   Check,
   Copy,
   Eye,
-  Home,
+  LogOut,
   Maximize2,
   Minimize2,
   Move,
@@ -34,6 +35,7 @@ import { useMobileViewport } from '../mobile/MobileViewportContext';
 import { DevPerfOverlay } from './DevPerfOverlay';
 import { MobileArenaHud } from './MobileArenaHud';
 import { VirtualControls } from './VirtualControls';
+import { AppSlider } from './heroUiHelpers';
 import { ITEM_ACCENT_COLORS, TankItemIcon } from '../../games/tank-battle/ui/itemIcons';
 import type { ItemKind } from '../../games/tank-battle/types';
 
@@ -54,9 +56,9 @@ interface GameViewportProps<TRules = Record<string, unknown>, TWorld = unknown> 
 
 /**
  * 实时对战视口：
- * - 顶部统一外围状态栏呈现双方比分、弹夹与补弹进度、护盾与进攻道具、回合时钟及实用按钮，绝不遮挡迷宫
- * - 下方独立 Canvas 容器由 SessionHost 单次挂载驱动，React HUD 更新不会重建画布或打断模拟
- * - 零 backdrop-blur 叠加，保证 Canvas 渲染顺滑流畅
+ * - 上方为全宽迷宫画布，桌面端零悬浮按键卡片遮挡，仅在调试模式显示性能叠加层
+ * - 桌面端底部为单行紧凑状态底栏，将双方比分、弹夹、道具、按键/AI 信息与回合工具融为一体
+ * - 移动端/平板沿用 MobileArenaHud 边缘悬浮 HUD 与 VirtualControls 虚拟摇杆
  */
 export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>({
   game,
@@ -265,354 +267,23 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
     }
   };
 
+  const clockWarning =
+    hud?.roundTimeRemainingSeconds !== null &&
+    hud?.roundTimeRemainingSeconds !== undefined &&
+    hud.roundTimeRemainingSeconds <= 10;
+  const clockText =
+    hud?.roundTimeRemainingSeconds !== null &&
+    hud?.roundTimeRemainingSeconds !== undefined
+      ? formatClock(hud.roundTimeRemainingSeconds)
+      : formatClock(hud?.battleElapsedSeconds ?? 0);
+
   return (
     <div
-      className={`h-full w-full overflow-hidden flex flex-col bg-[#E8E3D7] select-none ${
+      className={`h-full w-full overflow-hidden flex flex-col bg-[var(--background)] text-[var(--foreground)] select-none ${
         settingsOverlayOpen ? 'hidden' : ''
       }`}
     >
-      {/* 桌面端保留完整顶部外围状态栏；手机/Pad 端完全隐藏顶部栏、让游戏画面铺满全屏 */}
-      {!isMobileOrTablet && (
-        <div className="shrink-0 bg-[#FAF8F4] border-b border-[#CFC8B9] px-4 py-2">
-        {isMultiSeatArena ? (
-          <div
-            data-testid="arena-scoreboard-matrix"
-            className="max-w-[1440px] mx-auto space-y-2"
-          >
-            {/* 紧凑赛况控制条 */}
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 text-xs">
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#222830] text-[#E9D5FF] text-[11px] font-bold whitespace-nowrap">
-                  <Eye className="w-3 h-3 text-[#C084FC]" aria-hidden="true" />
-                  AI 乱斗 · <span className="font-mono-num">{snapshot.players.length}</span> 席
-                </span>
-                <span className="font-bold text-[#1C2127] whitespace-nowrap">
-                  第 <span className="font-mono-num">{hud?.roundNumber ?? 1}</span> 回合
-                </span>
-                <span className="text-[#6B7480] whitespace-nowrap">
-                  先得 <span className="font-mono-num">{hud?.targetScore ?? 5}</span> 分
-                </span>
-                <span
-                  className={`font-mono-num font-bold text-sm ${
-                    hud?.roundTimeRemainingSeconds !== null &&
-                    hud?.roundTimeRemainingSeconds !== undefined &&
-                    hud.roundTimeRemainingSeconds <= 10
-                      ? 'text-[#C93420]'
-                      : 'text-[#262D35]'
-                  }`}
-                >
-                  {hud?.roundTimeRemainingSeconds !== null &&
-                  hud?.roundTimeRemainingSeconds !== undefined
-                    ? formatClock(hud.roundTimeRemainingSeconds)
-                    : formatClock(hud?.battleElapsedSeconds ?? 0)}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                {hud?.mapCode && (
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={handleCopyMapCode}
-                    title="点击复制本场地图编号"
-                    className="inline-flex items-center gap-1 text-[11px] font-mono-num text-[#68717D] hover:text-[#1C2127] cursor-pointer"
-                  >
-                    <span className="truncate max-w-[150px]">{hud.mapCode}</span>
-                    {copiedCode ? (
-                      <Check className="w-3 h-3 text-[#1F8A5B] shrink-0" aria-hidden="true" />
-                    ) : (
-                      <Copy className="w-3 h-3 shrink-0" aria-hidden="true" />
-                    )}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  onClick={handleToggleMute}
-                  aria-label={muted ? '开启音效' : '静音'}
-                  title={muted ? '开启音效' : '静音'}
-                  className="w-7 h-7 rounded-md border border-[#D4CEC0] bg-[#F3EFE6] hover:bg-[#E7E1D4] flex items-center justify-center text-[#2C333B] cursor-pointer"
-                >
-                  {muted ? (
-                    <VolumeX className="w-3.5 h-3.5" aria-hidden="true" />
-                  ) : (
-                    <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
-                  )}
-                </button>
-                {canRequestFullscreen && (
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={handleToggleFullscreen}
-                    aria-label={isFullscreen ? '退出全屏' : '全屏横屏'}
-                    title={isFullscreen ? '退出全屏' : '全屏横屏'}
-                    className="w-7 h-7 rounded-md border border-[#D4CEC0] bg-[#F3EFE6] hover:bg-[#E7E1D4] flex items-center justify-center text-[#2C333B] cursor-pointer"
-                  >
-                    {isFullscreen ? (
-                      <Minimize2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    ) : (
-                      <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    )}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  onClick={handleTogglePause}
-                  aria-label={paused ? '继续对战' : '暂停对战'}
-                  title="暂停 / 继续（Esc）"
-                  className="w-7 h-7 rounded-md border border-[#D4CEC0] bg-[#F3EFE6] hover:bg-[#E7E1D4] flex items-center justify-center text-[#2C333B] cursor-pointer"
-                >
-                  {paused ? (
-                    <Play className="w-3.5 h-3.5" aria-hidden="true" />
-                  ) : (
-                    <Pause className="w-3.5 h-3.5" aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* 3～8 席紧凑选手矩阵 */}
-            <div
-              className={`grid gap-2 ${
-                snapshot.players.length <= 4
-                  ? 'grid-cols-2 md:grid-cols-4'
-                  : snapshot.players.length <= 6
-                  ? 'grid-cols-3 md:grid-cols-6'
-                  : 'grid-cols-4 md:grid-cols-8'
-              }`}
-            >
-              {(hud?.players ?? []).map((entry) => {
-                const cfg = snapshot.players.find((c) => c.slotId === entry.slotId);
-                const runtime = botStatuses[entry.slotId];
-                const isBoss =
-                  cfg?.controller === 'ai' &&
-                  cfg?.aiSource !== 'custom' &&
-                  cfg?.aiModelId === 'hellbringer';
-                const ammoPct = Math.round(
-                  (entry.ammo / Math.max(1, entry.maxAmmo)) * 100
-                );
-                return (
-                  <div
-                    key={entry.slotId}
-                    data-testid={`arena-hud-tile-${entry.slotId}`}
-                    style={
-                      isBoss && entry.alive
-                        ? {
-                            backgroundColor: BOSS_TIER_THEME.bgHex,
-                            borderColor: BOSS_TIER_THEME.borderHex,
-                          }
-                        : undefined
-                    }
-                    className={`rounded-md border px-2 py-1.5 flex flex-col gap-1 min-w-0 transition-opacity ${
-                      isBoss && entry.alive
-                        ? 'text-[#FCE7F3]'
-                        : entry.alive
-                        ? 'bg-white border-[#D6D0C2]'
-                        : 'bg-[#F0ECE2] border-[#DDD7C9] opacity-60'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1.5">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className="w-2.5 h-2.5 rounded-[3px] shrink-0"
-                          style={{
-                            backgroundColor: entry.alive ? entry.colorHex : '#7D8590',
-                          }}
-                        />
-                        <span
-                          className={`text-[11px] font-bold truncate ${
-                            isBoss && entry.alive ? 'text-[#FCE7F3]' : 'text-[#1C2127]'
-                          }`}
-                        >
-                          {entry.displayName}
-                        </span>
-                      </div>
-                      <span
-                        className={`font-mono-num text-sm font-extrabold leading-none shrink-0 ${
-                          isBoss && entry.alive ? 'text-[#FCE7F3]' : 'text-[#1C2127]'
-                        }`}
-                      >
-                        {entry.score}
-                      </span>
-                    </div>
-
-                    <div
-                      className={`flex items-center justify-between gap-1 text-[10px] ${
-                        isBoss && entry.alive ? 'text-[#E9B3C8]' : 'text-[#5D6672]'
-                      }`}
-                    >
-                      <span className="truncate">
-                        {cfg?.controller === 'human'
-                          ? '玩家'
-                          : cfg?.aiSource === 'custom'
-                          ? `自定义 · ${cfg.aiModelName ?? 'Worker'}`
-                          : isBoss
-                          ? `Lv.5 · ${cfg?.aiModelName ?? '地狱使者'}`
-                          : cfg?.aiModelName ?? 'AI'}
-                      </span>
-                      {!entry.alive ? (
-                        <span className="text-[#9B2216] font-semibold shrink-0">淘汰</span>
-                      ) : runtime && (runtime.state === 'timeout' || runtime.state === 'error') ? (
-                        <span className="text-[#B3261E] font-semibold shrink-0">
-                          {runtime.state === 'timeout' ? '超时隔离' : '脚本异常'}
-                        </span>
-                      ) : entry.statusItems[0] ? (
-                        <span className="text-[#1F4E78] font-semibold shrink-0">
-                          {entry.statusItems[0].label}
-                        </span>
-                      ) : (
-                        <span className="font-mono-num shrink-0">
-                          {entry.ammo}/{entry.maxAmmo}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="h-1 w-full rounded-full bg-[#E5DFD2] overflow-hidden">
-                      <div
-                        className="h-full"
-                        style={{
-                          width: `${ammoPct}%`,
-                          backgroundColor: entry.alive ? entry.colorHex : '#98A0AA',
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <div className="max-w-[1440px] mx-auto grid grid-cols-12 items-center gap-3">
-            {/* P1 状态栏 */}
-            <div className="col-span-5 min-w-0">
-              {p1 && (
-                <PlayerHudStrip
-                  player={p1}
-                  config={p1Config}
-                  align="left"
-                />
-              )}
-            </div>
-
-          {/* 中央回合、时钟、地图编号与快捷工具 */}
-          <div className="col-span-2 flex flex-col items-center justify-center text-center min-w-0">
-            <div className="flex items-center gap-1.5">
-              {isAiSpectate && (
-                <span
-                  data-testid="ai-spectate-badge"
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#222830] text-[#7DD3FC] text-[10px] font-bold whitespace-nowrap"
-                >
-                  <Eye className="w-2.5 h-2.5" aria-hidden="true" />
-                  AI 观战
-                </span>
-              )}
-              <span className="text-xs font-bold text-[#1C2127] whitespace-nowrap">
-                第 {hud?.roundNumber ?? 1} 回合
-              </span>
-              <span className="text-[11px] text-[#6B7480] whitespace-nowrap">
-                先得 {hud?.targetScore ?? 5} 分
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 mt-0.5">
-              <span
-                className={`text-sm font-mono-num font-bold ${
-                  hud?.roundTimeRemainingSeconds !== null &&
-                  hud?.roundTimeRemainingSeconds !== undefined &&
-                  hud.roundTimeRemainingSeconds <= 10
-                    ? 'text-[#C93420]'
-                    : 'text-[#262D35]'
-                }`}
-              >
-                {hud?.roundTimeRemainingSeconds !== null &&
-                hud?.roundTimeRemainingSeconds !== undefined
-                  ? formatClock(hud.roundTimeRemainingSeconds)
-                  : formatClock(hud?.battleElapsedSeconds ?? 0)}
-              </span>
-
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  onClick={handleToggleMute}
-                  aria-label={muted ? '开启音效' : '静音'}
-                  title={muted ? '开启音效' : '静音'}
-                  className="w-7 h-7 rounded-md border border-[#D4CEC0] bg-[#F3EFE6] hover:bg-[#E7E1D4] flex items-center justify-center text-[#2C333B] cursor-pointer"
-                >
-                  {muted ? (
-                    <VolumeX className="w-3.5 h-3.5" aria-hidden="true" />
-                  ) : (
-                    <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
-                  )}
-                </button>
-                {canRequestFullscreen && (
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={handleToggleFullscreen}
-                    aria-label={isFullscreen ? '退出全屏' : '全屏横屏'}
-                    title={isFullscreen ? '退出全屏' : '全屏横屏'}
-                    className="w-7 h-7 rounded-md border border-[#D4CEC0] bg-[#F3EFE6] hover:bg-[#E7E1D4] flex items-center justify-center text-[#2C333B] cursor-pointer"
-                  >
-                    {isFullscreen ? (
-                      <Minimize2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    ) : (
-                      <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    )}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  onClick={handleTogglePause}
-                  aria-label={paused ? '继续对战' : '暂停对战'}
-                  title="暂停 / 继续（Esc）"
-                  className="w-7 h-7 rounded-md border border-[#D4CEC0] bg-[#F3EFE6] hover:bg-[#E7E1D4] flex items-center justify-center text-[#2C333B] cursor-pointer"
-                >
-                  {paused ? (
-                    <Play className="w-3.5 h-3.5" aria-hidden="true" />
-                  ) : (
-                    <Pause className="w-3.5 h-3.5" aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {hud?.mapCode && (
-              <button
-                type="button"
-                tabIndex={-1}
-                onClick={handleCopyMapCode}
-                title="点击复制本场地图编号"
-                className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-mono-num text-[#68717D] hover:text-[#1C2127] cursor-pointer"
-              >
-                <span className="truncate max-w-[140px]">{hud.mapCode}</span>
-                {copiedCode ? (
-                  <Check className="w-3 h-3 text-[#1F8A5B] shrink-0" aria-hidden="true" />
-                ) : (
-                  <Copy className="w-3 h-3 shrink-0" aria-hidden="true" />
-                )}
-              </button>
-            )}
-          </div>
-
-          {/* P2 状态栏 */}
-          <div className="col-span-5 min-w-0">
-            {p2 && (
-              <PlayerHudStrip
-                player={p2}
-                config={p2Config}
-                align="right"
-              />
-            )}
-          </div>
-        </div>
-        )}
-        </div>
-      )}
-
-      {/* 中央完整迷宫画布容器 */}
+      {/* 主战迷宫画布区域（桌面端无顶部栏和侧边悬浮卡片遮挡） */}
       <div className="relative flex-1 min-h-0 w-full">
         <canvas
           ref={canvasRef}
@@ -620,69 +291,15 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
           className="absolute inset-0 block w-full h-full touch-game-surface"
         />
 
-        {/* 左侧边栏：桌面端展示 P1 按键/AI 信息，移动端隐藏键盘提示避免遮挡摇杆 */}
-        {(!isMobileOrTablet || debugMode) && (
-          <div className="pointer-events-none absolute top-2.5 left-2 z-20 flex flex-col gap-2 w-[146px]">
-            {!isMobileOrTablet && (
-              !isMultiSeatArena && p1Config ? (
-                p1Config.controller === 'ai' ? (
-                  <MatchAiInfoCard
-                    player={p1Config}
-                    runtimeStatus={botStatuses[p1Config.slotId]}
-                    testId="p1-ai-badge"
-                  />
-                ) : (
-                  <MatchKeyHintCard
-                    player={p1Config}
-                    controlMode={controlMode}
-                    testId="p1-key-hints"
-                  />
-                )
-              ) : isMultiSeatArena && humanArenaConfigs[0] ? (
-                <MatchKeyHintCard
-                  player={humanArenaConfigs[0]}
-                  controlMode={controlMode}
-                  testId="p1-key-hints"
-                />
-              ) : null
-            )}
-            {debugMode && (
-              <DevPerfOverlay
-                embedded
-                snapshot={perfSnapshot}
-                onClose={() => onToggleDebugMode?.()}
-              />
-            )}
+        {/* 仅开发者调试模式显示性能监控浮层 */}
+        {debugMode && (
+          <div className="pointer-events-none absolute top-2.5 left-2.5 z-20 w-[156px]">
+            <DevPerfOverlay
+              embedded
+              snapshot={perfSnapshot}
+              onClose={() => onToggleDebugMode?.()}
+            />
           </div>
-        )}
-
-        {/* 右侧边栏：桌面端展示 P2 按键/AI 信息，移动端隐藏以免干扰视口 */}
-        {!isMobileOrTablet && (
-          !isMultiSeatArena && p2Config ? (
-            <div className="pointer-events-none absolute top-2.5 right-2 z-20 w-[146px]">
-              {p2Config.controller === 'ai' ? (
-                <MatchAiInfoCard
-                  player={p2Config}
-                  runtimeStatus={botStatuses[p2Config.slotId]}
-                  testId="p2-ai-badge"
-                />
-              ) : (
-                <MatchKeyHintCard
-                  player={p2Config}
-                  controlMode={controlMode}
-                  testId="p2-key-hints"
-                />
-              )}
-            </div>
-          ) : isMultiSeatArena && humanArenaConfigs[1] ? (
-            <div className="pointer-events-none absolute top-2.5 right-2 z-20 w-[146px]">
-              <MatchKeyHintCard
-                player={humanArenaConfigs[1]}
-                controlMode={controlMode}
-                testId="p2-key-hints"
-              />
-            </div>
-          ) : null
         )}
 
         {/* 移动端边缘悬浮 HUD（顶部居中时间/工具+比分，最边缘弹药道具，左下回合，右下地图ID） */}
@@ -739,57 +356,60 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
         {/* 回合结束结算横幅 */}
         {!paused && hud?.roundBanner && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="px-9 py-6 rounded-xl bg-[#FAF8F4]/95 border-2 border-[#222830] text-center shadow-xl min-w-[300px]">
-              <div className="text-xs font-semibold text-[#646E7A]">
+            <div className="px-9 py-6 rounded-2xl bg-[var(--overlay)]/95 border-2 border-[var(--border)] text-center shadow-xl min-w-[300px]">
+              <div className="text-xs font-semibold text-[var(--muted)]">
                 第 {hud.roundBanner.roundNumber} 回合结束
               </div>
               <div
                 className="font-display text-2xl font-extrabold mt-1"
                 style={{
-                  color: hud.roundBanner.winnerColor ?? '#1C2127',
+                  color: hud.roundBanner.winnerColor ?? 'var(--foreground)',
                 }}
               >
                 {hud.roundBanner.reason}
               </div>
-              <div className="text-xs font-mono-num text-[#5A6470] mt-2">
+              <div className="text-xs font-mono-num text-[var(--muted)] mt-2">
                 {Math.max(1, Math.ceil(hud.roundBanner.nextRoundInSeconds))} 秒后进入下一回合
               </div>
             </div>
           </div>
         )}
 
-        {/* 暂停模态框（无 backdrop-blur，支持移动端横屏滚动与虚拟按键透明度/位置调节） */}
+        {/* 暂停模态框（居中标题 + 得分 + 主继续按钮 + 一行三图标按钮：返回/设置/退出） */}
         {paused && !editingFireLayout && (
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="对战已暂停"
-            className="absolute inset-0 z-40 bg-[#1C2127]/60 flex items-center justify-center p-3 sm:p-6"
+            aria-label="已暂停"
+            className="absolute inset-0 z-40 bg-black/60 flex items-center justify-center p-3 sm:p-6"
           >
-            <div className="w-full max-w-sm max-h-[94%] overflow-y-auto bg-[#FAF8F4] border border-[#CFC8B9] rounded-xl shadow-2xl p-4 sm:p-6 space-y-4">
-              <div>
-                <p className="text-xs font-semibold text-[#646E7A]">
+            <div className="w-full max-w-sm max-h-[94%] overflow-y-auto bg-[var(--overlay)] border border-[var(--border)] text-[var(--foreground)] rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4">
+              <div className="text-center space-y-1">
+                <h2 className="font-display text-2xl font-extrabold text-[var(--foreground)]">
+                  已暂停
+                </h2>
+                <p className="text-xs text-[var(--muted)]">
                   {pauseReason === 'background'
                     ? '页面切入后台已自动暂停'
                     : '计时与弹药补给均已冻结'}
                 </p>
-                <h2 className="font-display text-xl sm:text-2xl font-extrabold text-[#1C2127] mt-0.5">
-                  对战已暂停
-                </h2>
               </div>
 
               {hud && (
-                <div className="grid grid-cols-2 gap-2.5 py-2.5 border-y border-[#E3DDD0]">
+                <div className="grid grid-cols-2 gap-2 py-2.5 border-y border-[var(--separator)]">
                   {hud.players.map((p) => (
-                    <div key={p.slotId} className="flex items-center justify-between px-3 py-1.5 bg-[#F2EFE8] rounded-md">
-                      <span className="flex items-center gap-1.5 text-xs font-bold text-[#1C2127] truncate">
+                    <div
+                      key={p.slotId}
+                      className="flex items-center justify-between px-3 py-1.5 bg-[var(--surface-secondary)] rounded-lg"
+                    >
+                      <span className="flex items-center gap-1.5 text-xs font-bold text-[var(--foreground)] truncate">
                         <span
                           className="w-2.5 h-2.5 rounded-xs shrink-0"
                           style={{ backgroundColor: p.colorHex }}
                         />
                         {p.displayName}
                       </span>
-                      <span className="font-mono-num text-base font-extrabold text-[#1C2127]">
+                      <span className="font-mono-num text-base font-extrabold text-[var(--foreground)]">
                         {p.score}
                       </span>
                     </div>
@@ -798,130 +418,473 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
               )}
 
               {isMobileOrTablet && !isAiSpectate && (
-                <div className="px-3 py-2.5 bg-[#F2EFE8] border border-[#DED8CA] rounded-lg space-y-2">
-                  <div className="flex items-center justify-between text-xs font-semibold text-[#2B323A]">
-                    <span>虚拟按键透明度</span>
-                    <span className="font-mono-num text-[#D9432B]">{virtualControlsOpacity}%</span>
-                  </div>
-                  <input
-                    type="range"
+                <div className="px-3.5 py-3 bg-[var(--surface-secondary)] border border-[var(--border)] rounded-xl space-y-3">
+                  <AppSlider
+                    label="虚拟按键透明度"
+                    value={virtualControlsOpacity}
                     min={10}
                     max={80}
                     step={5}
-                    value={virtualControlsOpacity}
-                    onChange={(e) => setVirtualControlsOpacity(Number(e.target.value))}
-                    aria-label="虚拟按键透明度"
-                    className="w-full accent-[#D9432B] cursor-pointer"
+                    unit="%"
+                    onChange={setVirtualControlsOpacity}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setEditingFireLayout(true)}
-                    className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#1C2127] bg-white hover:bg-[#FAF8F4] border border-[#D4CEC0] rounded-md transition-colors cursor-pointer"
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth
+                    onPress={() => setEditingFireLayout(true)}
+                    className="min-h-[42px] font-semibold !rounded-full"
                   >
-                    <Move className="w-3.5 h-3.5 text-[#D9432B]" aria-hidden="true" />
+                    <Move className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
                     拖动调整开火按钮位置
-                  </button>
+                  </Button>
                 </div>
               )}
 
               <div className="space-y-2.5">
-                <button
-                  type="button"
-                  onClick={handleResume}
-                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-[#D9432B] hover:bg-[#BE3620] rounded-lg transition-colors cursor-pointer"
+                <Button
+                  variant="primary"
+                  size="md"
+                  fullWidth
+                  onPress={handleResume}
+                  className="min-h-[44px] font-bold !rounded-full accent-solid-btn"
                 >
                   <Play className="w-4 h-4 fill-current" aria-hidden="true" />
                   继续对战（Esc）
-                </button>
-                <button
-                  type="button"
-                  onClick={onOpenSettingsFromPause}
-                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-[#1C2127] bg-[#EAE5DA] hover:bg-[#DFD9CB] rounded-lg transition-colors cursor-pointer"
-                >
-                  <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
-                  规则与按键设置（下场生效）
-                </button>
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={onExitToSetup}
-                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#3B444F] bg-white hover:bg-[#F3EFE6] border border-[#D4CEC0] rounded-lg transition-colors cursor-pointer"
+                </Button>
+
+                <div className="grid grid-cols-3 gap-2 pt-0.5">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth
+                    data-testid="pause-return-setup-btn"
+                    onPress={onExitToSetup}
+                    className="min-h-[40px] !rounded-full font-semibold"
                   >
-                    <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-                    返回赛前配置
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onExitToLobby}
-                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#3B444F] bg-white hover:bg-[#F3EFE6] border border-[#D4CEC0] rounded-lg transition-colors cursor-pointer"
+                    <ArrowLeft className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    返回
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth
+                    data-testid="pause-settings-btn"
+                    onPress={onOpenSettingsFromPause}
+                    className="min-h-[40px] !rounded-full font-semibold"
                   >
-                    <Home className="w-3.5 h-3.5" aria-hidden="true" />
-                    返回大厅
-                  </button>
+                    <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    设置
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth
+                    data-testid="pause-exit-lobby-btn"
+                    onPress={onExitToLobby}
+                    className="min-h-[40px] !rounded-full font-semibold"
+                  >
+                    <LogOut className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    退出
+                  </Button>
                 </div>
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* 桌面端单行紧凑底部 HUD（吞并按键提示、AI 状态、比分弹药道具与回合工具） */}
+      {!isMobileOrTablet && (
+        <footer
+          data-testid="desktop-bottom-hud"
+          className="shrink-0 bg-[var(--surface)] border-t border-[var(--border)] px-3 py-1.5"
+        >
+          {isMultiSeatArena ? (
+            <div
+              data-testid="arena-scoreboard-matrix"
+              className="max-w-[1440px] mx-auto flex items-center gap-2.5 min-h-[46px]"
+            >
+              {/* 左侧横排 3～8 席迷你条 */}
+              <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto">
+                {(hud?.players ?? []).map((entry) => {
+                  const cfg = snapshot.players.find((c) => c.slotId === entry.slotId);
+                  const runtime = botStatuses[entry.slotId];
+                  const isBoss =
+                    cfg?.controller === 'ai' &&
+                    cfg?.aiSource !== 'custom' &&
+                    cfg?.aiModelId === 'hellbringer';
+                  const ammoPct = Math.round(
+                    (entry.ammo / Math.max(1, entry.maxAmmo)) * 100
+                  );
+                  const humanKeyHint =
+                    cfg?.controller === 'human'
+                      ? buildCompactMatchKeyHint(cfg, controlMode)
+                      : null;
+
+                  return (
+                    <div
+                      key={entry.slotId}
+                      data-testid={`arena-hud-tile-${entry.slotId}`}
+                      style={
+                        isBoss && entry.alive
+                          ? {
+                              backgroundColor: BOSS_TIER_THEME.bgHex,
+                              borderColor: BOSS_TIER_THEME.borderHex,
+                            }
+                          : undefined
+                      }
+                      className={`flex-1 min-w-[110px] max-w-[190px] rounded-lg border px-2 py-1 flex flex-col gap-0.5 transition-opacity ${
+                        isBoss && entry.alive
+                          ? 'text-[#FCE7F3]'
+                          : entry.alive
+                          ? 'bg-[var(--surface-secondary)]/70 border-[var(--border)]'
+                          : 'bg-[var(--surface-secondary)]/35 border-[var(--border)] opacity-55'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <div className="flex items-center gap-1 min-w-0">
+                          <span
+                            className="w-2 h-2 rounded-[2px] shrink-0"
+                            style={{
+                              backgroundColor: entry.alive ? entry.colorHex : '#7D8590',
+                            }}
+                          />
+                          <span
+                            className={`text-[11px] font-bold truncate ${
+                              isBoss && entry.alive ? 'text-[#FCE7F3]' : 'text-[var(--foreground)]'
+                            }`}
+                          >
+                            {entry.displayName}
+                          </span>
+                        </div>
+                        <span
+                          className={`font-mono-num text-xs font-extrabold leading-none shrink-0 ${
+                            isBoss && entry.alive ? 'text-[#FCE7F3]' : 'text-[var(--foreground)]'
+                          }`}
+                        >
+                          {entry.score}
+                        </span>
+                      </div>
+
+                      <div
+                        className={`flex items-center justify-between gap-1 text-[10px] leading-tight ${
+                          isBoss && entry.alive ? 'text-[#E9B3C8]' : 'text-[var(--muted)]'
+                        }`}
+                      >
+                        <span className="truncate font-mono-num">
+                          {humanKeyHint
+                            ? `${humanKeyHint.upKey}${humanKeyHint.leftKey}${humanKeyHint.downKey}${humanKeyHint.rightKey}·${humanKeyHint.fireKey}`
+                            : cfg?.aiSource === 'custom'
+                            ? cfg.aiModelName ?? 'Worker'
+                            : isBoss
+                            ? 'Lv.5 Boss'
+                            : cfg?.aiModelName ?? 'AI'}
+                        </span>
+                        {!entry.alive ? (
+                          <span className="text-red-500 font-semibold shrink-0">淘汰</span>
+                        ) : runtime && (runtime.state === 'timeout' || runtime.state === 'error') ? (
+                          <span className="text-red-500 font-semibold shrink-0">异常</span>
+                        ) : entry.statusItems[0] ? (
+                          <span className="text-[var(--accent)] font-semibold shrink-0 truncate max-w-[54px]">
+                            {entry.statusItems[0].label}
+                          </span>
+                        ) : (
+                          <span className="font-mono-num shrink-0">
+                            {entry.ammo}/{entry.maxAmmo}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="h-1 w-full rounded-full bg-[var(--border)] overflow-hidden">
+                        <div
+                          className="h-full"
+                          style={{
+                            width: `${ammoPct}%`,
+                            backgroundColor: entry.alive ? entry.colorHex : '#98A0AA',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* 右侧锚定时间、回合、地图编号与工具按钮 */}
+              <div className="shrink-0 flex items-center gap-2 pl-2.5 border-l border-[var(--separator)]">
+                <div className="flex flex-col items-end leading-tight">
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <span className="inline-flex items-center gap-1 text-[var(--accent)] font-bold whitespace-nowrap">
+                      <Eye className="w-3 h-3" aria-hidden="true" />
+                      {snapshot.players.length}席
+                    </span>
+                    <span className="font-bold text-[var(--foreground)] whitespace-nowrap">
+                      R{hud?.roundNumber ?? 1}
+                    </span>
+                    <span className="text-[var(--muted)] whitespace-nowrap">
+                      /{hud?.targetScore ?? 5}分
+                    </span>
+                    <span
+                      className={`font-mono-num font-bold text-xs ${
+                        clockWarning ? 'text-red-600 dark:text-red-400' : 'text-[var(--foreground)]'
+                      }`}
+                    >
+                      {clockText}
+                    </span>
+                  </div>
+                  {hud?.mapCode && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={handleCopyMapCode}
+                      title="点击复制本场地图编号"
+                      className="inline-flex items-center gap-1 text-[10px] font-mono-num text-[var(--muted)] hover:text-[var(--foreground)] cursor-pointer mt-0.5"
+                    >
+                      <span className="truncate max-w-[116px]">{hud.mapCode}</span>
+                      {copiedCode ? (
+                        <Check className="w-2.5 h-2.5 text-emerald-500 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <Copy className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    isIconOnly
+                    onPress={handleToggleMute}
+                    aria-label={muted ? '开启音效' : '静音'}
+                    className="!w-8 !h-8 !min-w-[32px] !p-0 !rounded-full"
+                  >
+                    {muted ? (
+                      <VolumeX className="w-3.5 h-3.5" aria-hidden="true" />
+                    ) : (
+                      <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
+                  </Button>
+                  {canRequestFullscreen && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      isIconOnly
+                      onPress={handleToggleFullscreen}
+                      aria-label={isFullscreen ? '退出全屏' : '全屏横屏'}
+                      className="!w-8 !h-8 !min-w-[32px] !p-0 !rounded-full"
+                    >
+                      {isFullscreen ? (
+                        <Minimize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      ) : (
+                        <Maximize2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      )}
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    isIconOnly
+                    onPress={handleTogglePause}
+                    aria-label={paused ? '继续对战' : '暂停对战'}
+                    className="!w-8 !h-8 !min-w-[32px] !p-0 !rounded-full"
+                  >
+                    {paused ? (
+                      <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                    ) : (
+                      <Pause className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="max-w-[1440px] mx-auto grid grid-cols-12 items-center gap-2 min-h-[46px]">
+              {/* 左侧 P1 紧凑信息（得分 + 名称 + 按键/AI + 弹药 + 激活道具） */}
+              <div className="col-span-5 min-w-0">
+                {p1 && (
+                  <BottomPlayerHudStrip
+                    player={p1}
+                    config={p1Config}
+                    runtimeStatus={p1Config ? botStatuses[p1Config.slotId] : undefined}
+                    controlMode={controlMode}
+                    align="left"
+                    slotPrefix="p1"
+                  />
+                )}
+              </div>
+
+              {/* 中央紧凑回合、时钟、地图码与工具图标 */}
+              <div className="col-span-2 flex flex-col items-center justify-center text-center min-w-0 gap-0.5">
+                <div className="flex items-center justify-center gap-1.5 leading-none">
+                  {isAiSpectate && (
+                    <span
+                      data-testid="ai-spectate-badge"
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[#222830] text-[#7DD3FC] text-[10px] font-bold whitespace-nowrap"
+                    >
+                      <Eye className="w-2.5 h-2.5" aria-hidden="true" />
+                      观战
+                    </span>
+                  )}
+                  <span className="text-[11px] font-bold text-[var(--foreground)] whitespace-nowrap">
+                    第 {hud?.roundNumber ?? 1} 回合
+                  </span>
+                  <span className="text-[10px] text-[var(--muted)] whitespace-nowrap">
+                    /{hud?.targetScore ?? 5}分
+                  </span>
+                  <span
+                    className={`text-xs font-mono-num font-extrabold ${
+                      clockWarning ? 'text-red-600 dark:text-red-400' : 'text-[var(--foreground)]'
+                    }`}
+                  >
+                    {clockText}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-center gap-1.5">
+                  {hud?.mapCode && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={handleCopyMapCode}
+                      title="点击复制本场地图编号"
+                      className="inline-flex items-center gap-1 text-[10px] font-mono-num text-[var(--muted)] hover:text-[var(--foreground)] cursor-pointer"
+                    >
+                      <span className="truncate max-w-[92px]">{hud.mapCode}</span>
+                      {copiedCode ? (
+                        <Check className="w-2.5 h-2.5 text-emerald-500 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <Copy className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />
+                      )}
+                    </button>
+                  )}
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      isIconOnly
+                      onPress={handleToggleMute}
+                      aria-label={muted ? '开启音效' : '静音'}
+                      className="!w-7 !h-7 !min-w-[28px] !p-0 !rounded-full"
+                    >
+                      {muted ? (
+                        <VolumeX className="w-3 h-3" aria-hidden="true" />
+                      ) : (
+                        <Volume2 className="w-3 h-3" aria-hidden="true" />
+                      )}
+                    </Button>
+                    {canRequestFullscreen && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        isIconOnly
+                        onPress={handleToggleFullscreen}
+                        aria-label={isFullscreen ? '退出全屏' : '全屏横屏'}
+                        className="!w-7 !h-7 !min-w-[28px] !p-0 !rounded-full"
+                      >
+                        {isFullscreen ? (
+                          <Minimize2 className="w-3 h-3" aria-hidden="true" />
+                        ) : (
+                          <Maximize2 className="w-3 h-3" aria-hidden="true" />
+                        )}
+                      </Button>
+                    )}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      isIconOnly
+                      onPress={handleTogglePause}
+                      aria-label={paused ? '继续对战' : '暂停对战'}
+                      className="!w-7 !h-7 !min-w-[28px] !p-0 !rounded-full"
+                    >
+                      {paused ? (
+                        <Play className="w-3 h-3" aria-hidden="true" />
+                      ) : (
+                        <Pause className="w-3 h-3" aria-hidden="true" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 右侧 P2 紧凑信息（镜像） */}
+              <div className="col-span-5 min-w-0">
+                {p2 && (
+                  <BottomPlayerHudStrip
+                    player={p2}
+                    config={p2Config}
+                    runtimeStatus={p2Config ? botStatuses[p2Config.slotId] : undefined}
+                    controlMode={controlMode}
+                    align="right"
+                    slotPrefix="p2"
+                  />
+                )}
+              </div>
+            </div>
+          )}
+        </footer>
+      )}
     </div>
   );
 }
 
-function PlayerHudStrip({
+function BottomPlayerHudStrip({
   player,
   config,
+  runtimeStatus,
+  controlMode,
   align,
-  compact = false,
+  slotPrefix,
 }: {
   player: PlayerHudEntry;
   config?: PlayerConfig;
+  runtimeStatus?: BotRuntimeStatus;
+  controlMode?: unknown;
   align: 'left' | 'right';
-  compact?: boolean;
+  slotPrefix: 'p1' | 'p2';
 }) {
   const isRight = align === 'right';
-  const showPips = player.maxAmmo <= 14;
+  const showPips = player.maxAmmo <= 12;
   const isAi = config?.controller === 'ai';
-  const isBoss =
-    isAi && config?.aiSource !== 'custom' && config?.aiModelId === 'hellbringer';
+  const isCustom = isAi && config?.aiSource === 'custom';
+  const isBoss = isAi && !isCustom && config?.aiModelId === 'hellbringer';
+  const hasFault =
+    runtimeStatus && (runtimeStatus.state === 'timeout' || runtimeStatus.state === 'error');
+  const keyHint = !isAi && config ? buildCompactMatchKeyHint(config, controlMode) : null;
 
   return (
     <div
-      className={`flex items-center ${compact ? 'gap-2' : 'gap-3.5'} ${
+      className={`flex items-center gap-2.5 min-w-0 ${
         isRight ? 'flex-row-reverse text-right' : 'flex-row text-left'
       }`}
     >
-      {/* 玩家颜色与得分大数字 */}
+      {/* 紧凑得分方块 */}
       <div
-        className={`${
-          compact ? 'w-9 h-9' : 'w-12 h-12'
-        } rounded-lg flex flex-col items-center justify-center shrink-0 text-white shadow-xs`}
+        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-white shadow-xs"
         style={{
           backgroundColor: player.alive ? player.colorHex : '#7D8590',
         }}
       >
-        <span
-          className={`${
-            compact ? 'text-lg' : 'text-2xl'
-          } font-display font-extrabold font-mono-num leading-none`}
-        >
+        <span className="text-lg font-display font-extrabold font-mono-num leading-none">
           {player.score}
         </span>
       </div>
 
-      {/* 名称、弹药条与当前道具槽 */}
-      <div className={`flex-1 min-w-0 ${compact ? 'space-y-0.5' : 'space-y-1.5'}`}>
+      {/* 名称 + 内联键位/AI 信息 + 弹药条 + 激活道具 */}
+      <div className="flex-1 min-w-0 space-y-1">
+        {/* 第一行：玩家名 + 内联操作键位 / AI 标签 + 淘汰状态 */}
         <div
-          className={`flex items-center gap-2 ${
+          className={`flex items-center gap-1.5 min-w-0 ${
             isRight ? 'flex-row-reverse' : 'flex-row'
           }`}
         >
-          <span className="text-sm font-bold text-[#1C2127] truncate">
+          <span className="text-xs font-bold text-[var(--foreground)] truncate max-w-[112px]">
             {player.displayName}
           </span>
-          {isAi && (
+
+          {isAi ? (
             <span
-              data-testid={isBoss ? `hud-boss-badge-${player.slotId}` : undefined}
+              data-testid={`${slotPrefix}-ai-badge`}
               style={
                 isBoss
                   ? {
@@ -931,273 +894,147 @@ function PlayerHudStrip({
                     }
                   : undefined
               }
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap shrink-0 border ${
-                isBoss ? '' : 'bg-[#222830] border-transparent text-[#F5F2EB]'
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap shrink-0 border ${
+                isBoss
+                  ? ''
+                  : 'bg-[var(--surface-secondary)] border-[var(--border)] text-[var(--foreground)]'
               }`}
             >
               <Bot
-                className="w-2.5 h-2.5"
-                style={{ color: isBoss ? '#FB7185' : '#7DD3FC' }}
+                className="w-2.5 h-2.5 shrink-0"
+                style={{ color: isBoss ? '#FB7185' : 'var(--accent)' }}
                 aria-hidden="true"
               />
-              {isBoss ? `Lv.5 · ${config?.aiModelName ?? '地狱使者'}` : config?.aiModelName ?? 'AI'}
+              <span>
+                {isBoss
+                  ? `Lv.5 · ${config?.aiModelName ?? '地狱使者'}`
+                  : isCustom
+                  ? `Worker · ${config?.aiModelName ?? '自定义'}`
+                  : config?.aiModelName ?? 'AI'}
+              </span>
+              {hasFault && (
+                <span className="text-red-400">
+                  · {runtimeStatus.state === 'timeout' ? '超时' : '异常'}
+                </span>
+              )}
             </span>
-          )}
-          <span className="text-xs font-mono-num font-semibold text-[#55606C] whitespace-nowrap">
-            弹药 {player.ammo}/{player.maxAmmo}
-          </span>
+          ) : keyHint ? (
+            <span
+              data-testid={`${slotPrefix}-key-hints`}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--surface-secondary)] border border-[var(--border)] text-[10px] font-mono-num text-[var(--muted)] whitespace-nowrap shrink-0"
+              title={`移动：${keyHint.upKey}/${keyHint.leftKey}/${keyHint.downKey}/${keyHint.rightKey}，开火：${keyHint.fireKey}`}
+            >
+              <span className="text-[var(--foreground)] font-semibold">
+                {keyHint.upKey}
+                {keyHint.leftKey}
+                {keyHint.downKey}
+                {keyHint.rightKey}
+              </span>
+              <span className="opacity-45">·</span>
+              <span
+                className="font-bold"
+                style={{ color: player.colorHex }}
+              >
+                {keyHint.fireKey}
+              </span>
+            </span>
+          ) : null}
+
           {!player.alive && (
-            <span className="text-xs font-semibold text-[#9B2216] whitespace-nowrap">
+            <span className="text-[10px] font-bold text-red-600 dark:text-red-400 whitespace-nowrap shrink-0">
               已淘汰
             </span>
           )}
         </div>
 
-        {/* 弹夹格子 + 补弹进度 */}
+        {/* 第二行：弹夹格子/进度条 + 弹药计数 + 激活道具胶囊 */}
         <div
-          className={`flex items-center gap-1 ${
-            isRight ? 'justify-end' : 'justify-start'
+          className={`flex items-center gap-2 min-w-0 ${
+            isRight ? 'flex-row-reverse' : 'flex-row'
           }`}
         >
-          {showPips ? (
-            Array.from({ length: player.maxAmmo }).map((_, idx) => {
-              const filled = idx < player.ammo;
-              const isReloadingPip = idx === player.ammo && player.reloadProgress > 0;
-              return (
+          <div
+            className={`flex items-center gap-0.5 shrink-0 ${
+              isRight ? 'flex-row-reverse' : 'flex-row'
+            }`}
+          >
+            {showPips ? (
+              Array.from({ length: player.maxAmmo }).map((_, idx) => {
+                const filled = idx < player.ammo;
+                const isReloadingPip = idx === player.ammo && player.reloadProgress > 0;
+                return (
+                  <div
+                    key={idx}
+                    className="relative w-2.5 h-1.5 rounded-[2px] bg-[var(--surface-secondary)] overflow-hidden border border-[var(--border)]"
+                  >
+                    {filled && (
+                      <div
+                        className="absolute inset-0"
+                        style={{ backgroundColor: player.colorHex }}
+                      />
+                    )}
+                    {isReloadingPip && (
+                      <div
+                        className="absolute inset-y-0 left-0 opacity-60"
+                        style={{
+                          width: `${Math.round(player.reloadProgress * 100)}%`,
+                          backgroundColor: player.colorHex,
+                        }}
+                      />
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="w-24 h-1.5 rounded-full bg-[var(--surface-secondary)] overflow-hidden border border-[var(--border)]">
                 <div
-                  key={idx}
-                  className="relative w-3.5 h-2 rounded-[2px] bg-[#E2DDD1] overflow-hidden border border-[#CFC8B9]"
-                >
-                  {filled && (
-                    <div
-                      className="absolute inset-0"
-                      style={{ backgroundColor: player.colorHex }}
-                    />
-                  )}
-                  {isReloadingPip && (
-                    <div
-                      className="absolute inset-y-0 left-0 opacity-60"
-                      style={{
-                        width: `${Math.round(player.reloadProgress * 100)}%`,
-                        backgroundColor: player.colorHex,
-                      }}
-                    />
-                  )}
-                </div>
-              );
-            })
-          ) : (
-            <div className="w-36 h-2 rounded-sm bg-[#E2DDD1] overflow-hidden border border-[#CFC8B9]">
-              <div
-                className="h-full"
-                style={{
-                  width: `${Math.round((player.ammo / Math.max(1, player.maxAmmo)) * 100)}%`,
-                  backgroundColor: player.colorHex,
-                }}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* 护盾与当前持有道具状态（无圆胶囊堆叠，简洁战术指示条） */}
-        <div
-          className={`flex flex-wrap items-center gap-2 min-h-[20px] ${
-            isRight ? 'justify-end' : 'justify-start'
-          }`}
-        >
-          {player.statusItems.length === 0 ? (
-            <span className="text-[11px] text-[#8E96A0]">无激活道具</span>
-          ) : (
-            player.statusItems.map((item) => {
-              const accent =
-                ITEM_ACCENT_COLORS[(item.iconKey as ItemKind) ?? 'shield'] ??
-                ITEM_ACCENT_COLORS.shield;
-              return (
-                <div
-                  key={item.id}
-                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-semibold whitespace-nowrap"
+                  className="h-full"
                   style={{
-                    backgroundColor: accent.bg,
-                    borderColor: accent.border,
-                    color: accent.fg,
+                    width: `${Math.round((player.ammo / Math.max(1, player.maxAmmo)) * 100)}%`,
+                    backgroundColor: player.colorHex,
                   }}
-                >
-                  {item.iconKey && (
-                    <TankItemIcon kind={item.iconKey} className="w-3.5 h-3.5 shrink-0" />
-                  )}
-                  <span>{item.label}</span>
-                  <span className="font-mono-num">{item.valueText}</span>
-                </div>
-              );
-            })
+                />
+              </div>
+            )}
+          </div>
+
+          <span className="text-[10px] font-mono-num font-semibold text-[var(--muted)] whitespace-nowrap shrink-0">
+            {player.ammo}/{player.maxAmmo}
+          </span>
+
+          {player.statusItems.length > 0 && (
+            <div
+              className={`flex items-center gap-1 min-w-0 overflow-hidden ${
+                isRight ? 'flex-row-reverse' : 'flex-row'
+              }`}
+            >
+              {player.statusItems.map((item) => {
+                const accent =
+                  ITEM_ACCENT_COLORS[(item.iconKey as ItemKind) ?? 'shield'] ??
+                  ITEM_ACCENT_COLORS.shield;
+                return (
+                  <div
+                    key={item.id}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap shrink-0 leading-none"
+                    style={{
+                      backgroundColor: accent.bg,
+                      borderColor: accent.border,
+                      color: accent.fg,
+                    }}
+                  >
+                    {item.iconKey && (
+                      <TankItemIcon kind={item.iconKey} className="w-3 h-3 shrink-0" />
+                    )}
+                    <span>{item.label}</span>
+                    <span className="font-mono-num">{item.valueText}</span>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
     </div>
-  );
-}
-
-function MatchAiInfoCard({
-  player,
-  runtimeStatus,
-  testId,
-}: {
-  player: PlayerConfig;
-  runtimeStatus?: BotRuntimeStatus;
-  testId: string;
-}) {
-  const isCustom = player.aiSource === 'custom';
-  const isBoss = !isCustom && player.aiModelId === 'hellbringer';
-  const hasFault =
-    runtimeStatus && (runtimeStatus.state === 'timeout' || runtimeStatus.state === 'error');
-
-  return (
-    <aside
-      data-testid={testId}
-      aria-label={`${player.displayName} AI 策略信息`}
-      style={
-        isBoss
-          ? {
-              backgroundColor: BOSS_TIER_THEME.bgHex,
-              borderColor: BOSS_TIER_THEME.borderHex,
-              color: BOSS_TIER_THEME.textHex,
-            }
-          : undefined
-      }
-      className={`w-full rounded-lg border px-2.5 py-2 shadow-xs space-y-1.5 ${
-        isBoss ? '' : 'border-[#CFC8B9] bg-[#FAF8F4]/92 text-[#1C2127]'
-      }`}
-    >
-      <div
-        className={`flex items-center justify-between gap-1 pb-1 border-b ${
-          isBoss ? 'border-[#5C1D3E]' : 'border-[#E5DFD3]'
-        }`}
-      >
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span
-            className="w-2 h-2 rounded-[2px] shrink-0"
-            style={{ backgroundColor: player.colorHex }}
-            aria-hidden="true"
-          />
-          <span className="text-[11px] font-bold truncate">{player.displayName}</span>
-        </div>
-        <span
-          className="text-[9px] font-bold whitespace-nowrap shrink-0"
-          style={{ color: isBoss ? '#FB7185' : '#1F4E78' }}
-        >
-          {isCustom ? 'Worker AI' : isBoss ? 'BOSS Lv.5' : 'TS AI'}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-1.5 text-[11px] font-bold">
-        <Bot
-          className="w-3.5 h-3.5 shrink-0"
-          style={{ color: isBoss ? '#FB7185' : '#222830' }}
-          aria-hidden="true"
-        />
-        <span className="truncate">{player.aiModelName ?? '战术游击'}</span>
-      </div>
-
-      <div
-        className={`text-[10px] leading-tight ${
-          hasFault
-            ? 'text-[#B3261E] font-semibold'
-            : isBoss
-            ? 'text-[#E9B3C8]'
-            : 'text-[#68717D]'
-        }`}
-      >
-        {hasFault
-          ? runtimeStatus.state === 'timeout'
-            ? `超时强杀(${runtimeStatus.timeoutCount}) · 冷却重启`
-            : '脚本报错 · 已隔离'
-          : isCustom && runtimeStatus && runtimeStatus.avgMs > 0
-          ? `沙箱运行 · ${runtimeStatus.avgMs.toFixed(1)}ms`
-          : isBoss
-          ? '5次弹道攻防 · 全段激光'
-          : '自主寻路 · 弹道预判'}
-      </div>
-    </aside>
-  );
-}
-
-function MatchKeyHintCard({
-  player,
-  controlMode,
-  testId,
-}: {
-  player: PlayerConfig;
-  controlMode?: unknown;
-  testId: string;
-}) {
-  const hint = buildCompactMatchKeyHint(player, controlMode);
-
-  return (
-    <aside
-      data-testid={testId}
-      aria-label={`${player.displayName} 按键提示`}
-      className="w-full rounded-lg border border-[#CFC8B9] bg-[#FAF8F4]/92 px-2.5 py-2 shadow-xs text-[#1C2127]"
-    >
-      {/* 标题行：色块 + 玩家名 + 操控说明 */}
-      <div className="flex items-center justify-between gap-1 pb-1.5 border-b border-[#E5DFD3]">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span
-            className="w-2 h-2 rounded-[2px] shrink-0"
-            style={{ backgroundColor: player.colorHex }}
-            aria-hidden="true"
-          />
-          <span className="text-[11px] font-bold truncate">{player.displayName}</span>
-        </div>
-        <span className="text-[9px] font-semibold text-[#68717D] whitespace-nowrap shrink-0">
-          {hint.moveModeLabel}
-        </span>
-      </div>
-
-      {/* 迷你倒 T 方向键区 */}
-      <div className="mt-1.5 flex flex-col items-center gap-1">
-        <KeyHintCap label={hint.upKey} accentHex={player.colorHex} />
-        <div className="grid grid-cols-3 gap-1 w-full">
-          <KeyHintCap label={hint.leftKey} accentHex={player.colorHex} fullWidth />
-          <KeyHintCap label={hint.downKey} accentHex={player.colorHex} fullWidth />
-          <KeyHintCap label={hint.rightKey} accentHex={player.colorHex} fullWidth />
-        </div>
-      </div>
-
-      {/* 开火键行 */}
-      <div className="mt-1.5 pt-1.5 border-t border-[#E5DFD3] flex items-center justify-between gap-1.5">
-        <span className="text-[10px] font-semibold text-[#55606C] shrink-0">开火</span>
-        <span
-          className="inline-flex items-center justify-center min-w-[44px] max-w-[82px] px-1.5 py-0.5 rounded border text-[10px] font-mono-num font-bold truncate shadow-[0_1px_0_rgba(0,0,0,0.18)] text-white"
-          style={{
-            backgroundColor: player.colorHex,
-            borderColor: 'rgba(28,33,39,0.22)',
-          }}
-        >
-          {hint.fireKey}
-        </span>
-      </div>
-    </aside>
-  );
-}
-
-function KeyHintCap({
-  label,
-  accentHex,
-  fullWidth = false,
-}: {
-  label: string;
-  accentHex: string;
-  fullWidth?: boolean;
-}) {
-  return (
-    <span
-      className={`inline-flex items-center justify-center h-[21px] px-1 rounded border border-[#CBC3B3] bg-white text-[10px] font-mono-num font-bold text-[#1C2127] shadow-[0_1px_0_#C4BCA9] truncate ${
-        fullWidth ? 'w-full' : 'min-w-[38px]'
-      }`}
-      style={{ borderBottomColor: accentHex }}
-    >
-      {label}
-    </span>
   );
 }
 

@@ -512,7 +512,7 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
       for (let i = 1; i < p.trail.length; i += 1) {
         const frac = i / p.trail.length;
         ctx.globalAlpha = frac * 0.36;
-        ctx.lineWidth = Math.max(1.5, p.radius * frac * 1.15);
+        ctx.lineWidth = Math.max(1.1, p.radius * frac * 1.15);
         ctx.beginPath();
         ctx.moveTo(p.trail[i - 1].x, p.trail[i - 1].y);
         ctx.lineTo(p.trail[i].x, p.trail[i].y);
@@ -526,40 +526,40 @@ export class TankBattleRenderer implements GameRenderer<TankWorldState> {
     ctx.rotate(angle);
 
     if (p.source === 'normal') {
-      // 普通弹：经典实心圆弹
+      // 普通弹：经典实心圆弹（按 p.radius 等比绘制，缩小后保留锐利深色描边确保可见度）
       ctx.fillStyle = p.colorHex;
       ctx.strokeStyle = '#1C2127';
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = Math.max(1, p.radius * 0.42);
       ctx.beginPath();
       ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.fillStyle = 'rgba(255,255,255,0.72)';
       ctx.beginPath();
-      ctx.arc(-1.2, -1.2, p.radius * 0.35, 0, Math.PI * 2);
+      ctx.arc(-p.radius * 0.28, -p.radius * 0.28, Math.max(0.7, p.radius * 0.34), 0, Math.PI * 2);
       ctx.fill();
     } else if (p.source === 'rapid_fire') {
-      // 连发弹：流线曳光弹头
+      // 连发弹：流线曳光弹头（按 p.radius 等比缩放）
       ctx.fillStyle = p.colorHex;
       ctx.strokeStyle = '#1C2127';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = Math.max(1, p.radius * 0.4);
       ctx.beginPath();
-      ctx.moveTo(p.radius + 4, 0);
-      ctx.lineTo(-p.radius - 2, -p.radius * 0.8);
-      ctx.lineTo(-p.radius + 1, 0);
-      ctx.lineTo(-p.radius - 2, p.radius * 0.8);
+      ctx.moveTo(p.radius * 1.8, 0);
+      ctx.lineTo(-p.radius * 1.35, -p.radius * 0.85);
+      ctx.lineTo(-p.radius * 0.7, 0);
+      ctx.lineTo(-p.radius * 1.35, p.radius * 0.85);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
     } else if (p.source === 'shotgun') {
-      // 三连发散弹：菱形穿甲弹丸
+      // 三连发散弹：菱形穿甲弹丸（按 p.radius 等比缩小一半）
       ctx.fillStyle = p.colorHex;
       ctx.strokeStyle = '#1C2127';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = Math.max(1, p.radius * 0.42);
       ctx.beginPath();
-      ctx.moveTo(p.radius + 2.5, 0);
+      ctx.moveTo(p.radius * 1.5, 0);
       ctx.lineTo(0, -p.radius);
-      ctx.lineTo(-p.radius - 1.5, 0);
+      ctx.lineTo(-p.radius * 1.3, 0);
       ctx.lineTo(0, p.radius);
       ctx.closePath();
       ctx.fill();

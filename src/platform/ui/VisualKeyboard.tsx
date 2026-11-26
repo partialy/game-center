@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Tabs } from '@heroui/react';
 import { Keyboard } from 'lucide-react';
 import type {
   ActionDefinition,
@@ -27,9 +28,9 @@ interface VisualKeyboardProps {
 }
 
 /**
- * 简易视觉化键盘组件（用于设置页「玩家与改键」）：
+ * 视觉化键盘组件（支持浅色/深色主题与 HeroUI Tabs 玩家切换）：
  * - 实时高亮当前选中玩家已绑定的键位与正在配置的按键
- * - 同步淡色标记另一位玩家已占用键位与冲突键，避免键位打架
+ * - 同步标记另一位玩家已占用键位与冲突键，避免键位打架
  * - 支持真实键盘按下实时反馈；录入改键时点击虚拟键帽也可直接指定键位
  */
 export function VisualKeyboard({
@@ -43,7 +44,6 @@ export function VisualKeyboard({
 }: VisualKeyboardProps) {
   const [livePressedCodes, setLivePressedCodes] = useState<Set<string>>(() => new Set());
 
-  // 实时监听物理按键按下/松开，让视觉键盘提供即时按压反馈
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
@@ -102,54 +102,53 @@ export function VisualKeyboard({
     <section
       data-testid="visual-keyboard-panel"
       aria-label="视觉化键盘键位预览"
-      className="bg-[#FAF8F4] border border-[#D8D2C5] rounded-xl p-4 space-y-3.5 shadow-xs"
+      className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 space-y-3.5 shadow-xs"
     >
       {/* 顶部：标题 + 当前查看/高亮玩家切换 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Keyboard className="w-4 h-4 text-[#3A424C] shrink-0" aria-hidden="true" />
+          <Keyboard className="w-4 h-4 text-[var(--accent)] shrink-0" aria-hidden="true" />
           <div>
-            <h2 className="text-sm font-bold text-[#1C2127] leading-tight">
+            <h2 className="text-sm font-bold text-[var(--foreground)] leading-tight">
               键位分布键盘图
             </h2>
-            <p className="text-[11px] text-[#646E7A] mt-0.5">
+            <p className="text-[11px] text-[var(--muted)] mt-0.5">
               高亮显示选中玩家键位；改键时按实体键或直接点击键帽即可绑定
             </p>
           </div>
         </div>
 
-        <div
-          className="flex items-center gap-1 p-1 bg-[#EAE5DA] rounded-md"
-          role="tablist"
-          aria-label="切换高亮玩家"
+        <Tabs
+          selectedKey={selectedSlotId}
+          onSelectionChange={(key) => onSelectSlot(String(key) as PlayerSlotId)}
         >
-          {profiles.map((profile) => {
-            const active = profile.slotId === selectedSlotId;
-            const displayName = resolveDisplayName(profile.slotId, profile.name);
-            return (
-              <button
-                key={profile.slotId}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                data-testid={`keyboard-player-tab-${profile.slotId}`}
-                onClick={() => onSelectSlot(profile.slotId)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  active
-                    ? 'bg-white text-[#1C2127] shadow-xs'
-                    : 'text-[#4F5864] hover:text-[#1C2127]'
-                }`}
-              >
-                <span
-                  className="w-2.5 h-2.5 rounded-[3px] shrink-0"
-                  style={{ backgroundColor: profile.colorHex }}
-                  aria-hidden="true"
-                />
-                <span>{displayName}</span>
-              </button>
-            );
-          })}
-        </div>
+          <Tabs.ListContainer>
+            <Tabs.List
+              aria-label="切换高亮玩家"
+              className="bg-[var(--surface-secondary)] border border-[var(--border)] p-1 rounded-lg"
+            >
+              {profiles.map((profile) => {
+                const displayName = resolveDisplayName(profile.slotId, profile.name);
+                return (
+                  <Tabs.Tab
+                    key={profile.slotId}
+                    id={profile.slotId}
+                    data-testid={`keyboard-player-tab-${profile.slotId}`}
+                    className="px-2.5 py-1.5 min-h-[34px] text-xs font-semibold whitespace-nowrap flex items-center gap-1.5"
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-[3px] shrink-0"
+                      style={{ backgroundColor: profile.colorHex }}
+                      aria-hidden="true"
+                    />
+                    <span>{displayName}</span>
+                    <Tabs.Indicator />
+                  </Tabs.Tab>
+                );
+              })}
+            </Tabs.List>
+          </Tabs.ListContainer>
+        </Tabs>
       </div>
 
       {/* 改键状态提示栏 */}
@@ -157,34 +156,34 @@ export function VisualKeyboard({
         data-testid="visual-keyboard-status"
         className={`px-3 py-2 rounded-lg border text-xs flex items-center justify-between gap-2 ${
           capturingTarget
-            ? 'bg-[#FFF6E5] border-[#E3B463] text-[#8A4B08] font-semibold'
-            : 'bg-[#F2EFE8] border-[#E2DDD1] text-[#4F5864]'
+            ? 'bg-amber-500/12 border-amber-500/40 text-amber-800 dark:text-amber-300 font-semibold'
+            : 'bg-[var(--surface-secondary)] border-[var(--border)] text-[var(--muted)]'
         }`}
       >
         {capturingTarget && capturingProfile && capturingAction ? (
           <span>
             正在为{' '}
-            <strong className="text-[#1C2127]">
+            <strong className="text-[var(--foreground)]">
               {resolveDisplayName(capturingProfile.slotId, capturingProfile.name)}
             </strong>{' '}
-            配置「<strong className="text-[#1C2127]">{capturingAction.label}</strong>
+            配置「<strong className="text-[var(--foreground)]">{capturingAction.label}</strong>
             」—— 请按下键盘按键或点击下方键帽（Esc 取消）
           </span>
         ) : (
           <span>
             当前高亮{' '}
-            <strong className="text-[#1C2127]">
+            <strong className="text-[var(--foreground)]">
               {selectedProfile
                 ? resolveDisplayName(selectedProfile.slotId, selectedProfile.name)
                 : selectedSlotId.toUpperCase()}
             </strong>{' '}
-            的按键配置，点击左侧任意键帽进入改键录入
+            的按键配置，点击下方动作键帽即可进入改键录入
           </span>
         )}
       </div>
 
       {/* 60 列精密对齐 5 行机械键盘盘面 */}
-      <div className="rounded-xl bg-[#252B33] border border-[#171C22] p-2.5 space-y-1.5 shadow-inner overflow-x-auto">
+      <div className="rounded-xl bg-[#1F252E] border border-[#141820] p-2.5 space-y-1.5 shadow-inner overflow-x-auto">
         <div className="min-w-[540px] space-y-1.5">
           {VISUAL_KEYBOARD_ROWS.map((row, rowIdx) => (
             <div
@@ -296,8 +295,8 @@ export function VisualKeyboard({
         </div>
       </div>
 
-      {/* 简洁图例说明（纯文本+小色块，无胶囊堆叠） */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[#5D6672]">
+      {/* 图例说明 */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[var(--muted)]">
         <span className="inline-flex items-center gap-1.5">
           <span
             className="w-2.5 h-2.5 rounded-[3px] shrink-0"

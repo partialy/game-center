@@ -1,3 +1,4 @@
+import { Button, Input } from '@heroui/react';
 import {
   AlertCircle,
   Bot,
@@ -18,6 +19,7 @@ import {
 } from '../games/contracts';
 import { validateArenaSeatName } from '../ai/customBotStore';
 import { PLAYER_COLOR_PALETTE } from '../input/bindings';
+import { AppSelect, type SelectOptionGroup } from './heroUiHelpers';
 
 interface ArenaRosterPanelProps<TRules extends Record<string, unknown>> {
   game: GameDefinition<TRules, unknown>;
@@ -81,10 +83,7 @@ export function validateArenaSeats(seats: ArenaSeatConfig[]): {
 }
 
 /**
- * 2～8 席多 AI 竞技场编队面板：
- * - 支持一键切换 2/4/6/8 席规模、增减席位与多模型随机填充
- * - 支持为每席自定义名称、涂装颜色、人类/AI 身份及任意内置/自定义大模型 AI 脚本
- * - 5 席以上自动提供非阻塞推荐大地图尺寸快捷套用
+ * HeroUI v3 2～8 席多 AI 竞技场编队面板。
  */
 export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
   game,
@@ -186,72 +185,92 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
     onSeatsChange(next);
   };
 
+  const modelSelectGroups: SelectOptionGroup[] = [];
+  if (customBotScripts.length > 0) {
+    modelSelectGroups.push({
+      title: '自定义大模型脚本库',
+      options: customBotScripts.map((c) => ({
+        value: `custom:${c.id}`,
+        label: `[自定义] ${c.name}（${c.tierLabel}${c.validation.status === 'verified' ? ' · 已校验' : ''}）`,
+      })),
+    });
+  }
+  modelSelectGroups.push({
+    title: '内置 TS 策略脚本',
+    options: builtinModels.map((m) => ({
+      value: `builtin:${m.id}`,
+      label: `[内置 Lv.${m.difficultyLevel}] ${m.name} · ${m.difficultyLabel}`,
+    })),
+  });
+
   return (
     <section aria-label="多 AI 乱斗阵容编队" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-lg font-bold tracking-tight text-[#1C2127]">
+          <h2 className="text-base sm:text-lg font-bold tracking-tight text-[var(--foreground)]">
             多 AI 乱斗阵容（<span className="font-mono-num">{seats.length}</span> 席）
           </h2>
-          <p className="text-xs text-[#59626D] mt-0.5">
+          <p className="text-xs text-[var(--muted)] mt-0.5">
             支持 2～{maxSeats} 席同台混战 · 可混搭大模型自定义脚本、内置模型及最多 2 名人类玩家
           </p>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           data-testid="roster-open-studio-btn"
-          onClick={() => onOpenAiStudio('editor')}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#F5F2EB] bg-[#222830] hover:bg-[#313A46] rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          onPress={() => onOpenAiStudio('editor')}
+          className="min-h-[38px] max-sm:min-h-[44px] whitespace-nowrap shrink-0 font-semibold"
         >
-          <Code2 className="w-3.5 h-3.5 text-[#7DD3FC]" aria-hidden="true" />
+          <Code2 className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
           AI 脚本工坊（{customBotScripts.length}）
-        </button>
+        </Button>
       </div>
 
       {/* 规模快捷预设 + 增席 + 随机填充 */}
-      <div className="bg-[#FAF8F4] border border-[#D8D2C5] rounded-lg p-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-semibold text-[#4A535E] mr-1">规模</span>
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-semibold text-[var(--muted)] mr-1">规模</span>
           {SEAT_PRESETS.filter((n) => n <= maxSeats).map((count) => {
             const active = seats.length === count;
             return (
-              <button
+              <Button
                 key={count}
-                type="button"
+                size="sm"
+                variant={active ? 'primary' : 'secondary'}
                 data-testid={`brawl-preset-${count}`}
-                onClick={() => handleSetCount(count)}
-                className={`px-2.5 py-1 text-xs font-mono-num font-bold rounded-md border transition-colors cursor-pointer ${
-                  active
-                    ? 'bg-[#1C2127] text-white border-[#1C2127]'
-                    : 'bg-white text-[#3A424C] border-[#D4CEC0] hover:bg-[#EFECE3]'
+                onPress={() => handleSetCount(count)}
+                className={`min-h-[36px] max-sm:min-h-[42px] px-2.5 font-mono-num font-bold ${
+                  active ? 'accent-solid-btn' : ''
                 }`}
               >
                 {count} 席
-              </button>
+              </Button>
             );
           })}
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
             data-testid="brawl-randomize-btn"
-            onClick={handleRandomizeRoster}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-[#3A424C] bg-[#EAE5DA] hover:bg-[#DFD9CB] rounded-md transition-colors whitespace-nowrap cursor-pointer"
+            onPress={handleRandomizeRoster}
+            className="min-h-[36px] max-sm:min-h-[42px] whitespace-nowrap"
           >
-            <Shuffle className="w-3 h-3" aria-hidden="true" />
+            <Shuffle className="w-3.5 h-3.5" aria-hidden="true" />
             随机多模型
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
             data-testid="brawl-add-seat"
-            disabled={seats.length >= maxSeats}
-            onClick={handleAddSeat}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold text-white bg-[#D9432B] hover:bg-[#BE3620] disabled:opacity-40 disabled:cursor-not-allowed rounded-md transition-colors whitespace-nowrap cursor-pointer"
+            isDisabled={seats.length >= maxSeats}
+            onPress={handleAddSeat}
+            className="min-h-[36px] max-sm:min-h-[42px] whitespace-nowrap accent-solid-btn"
           >
             <Plus className="w-3.5 h-3.5" aria-hidden="true" />
             加席
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -259,7 +278,7 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
       {needsLargerMap && onApplyRecommendedMapSize && (
         <div
           data-testid="brawl-map-recommend-banner"
-          className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-lg bg-[#FCF2DF] border border-[#E7C78C] text-xs text-[#7D4508]"
+          className="flex flex-wrap items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl bg-amber-500/12 border border-amber-500/35 text-xs text-amber-800 dark:text-amber-300"
         >
           <div className="flex items-center gap-2 min-w-0">
             <Sparkles className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -271,21 +290,22 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
               以保证走位与出生空间。
             </span>
           </div>
-          <button
-            type="button"
+          <Button
+            size="sm"
+            variant="primary"
             data-testid="brawl-apply-map-btn"
-            onClick={() => onApplyRecommendedMapSize(recommendedCols, recommendedRows)}
-            className="px-2.5 py-1 text-[11px] font-bold text-white bg-[#B45309] hover:bg-[#92400E] rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            onPress={() => onApplyRecommendedMapSize(recommendedCols, recommendedRows)}
+            className="min-h-[34px] whitespace-nowrap shrink-0 accent-solid-btn"
           >
             一键套用 {recommendedCols}×{recommendedRows}
-          </button>
+          </Button>
         </div>
       )}
 
       {!validation.valid && (
         <div
           role="alert"
-          className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-[#9B2216] bg-[#FDECE9] border border-[#EAB5AC] rounded-md"
+          className="flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium rounded-xl bg-red-500/10 border border-red-500/35 text-red-700 dark:text-red-300"
         >
           <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
           <span>请确保所有席位涂装颜色互不重复且名称合法（最多支持 2 名人类玩家同屏）。</span>
@@ -293,7 +313,7 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
       )}
 
       {/* 席位卡片列表 */}
-      <div className="space-y-2.5">
+      <div className="space-y-3">
         {seats.map((seat, idx) => {
           const takenByOthers = new Set(
             seats
@@ -331,7 +351,7 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
             <div
               key={seat.slotId}
               data-testid={`brawl-seat-card-${seat.slotId}`}
-              className="bg-[#FAF8F4] border border-[#D8D2C5] rounded-lg p-3 space-y-2.5"
+              className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3.5 space-y-3"
             >
               {/* 顶行：席位序号 + 身份切换 + 删除 */}
               <div className="flex items-center justify-between gap-2">
@@ -342,11 +362,11 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                   >
                     {idx + 1}
                   </span>
-                  <span className="text-xs font-bold text-[#1C2127]">
+                  <span className="text-xs font-bold text-[var(--foreground)]">
                     席位 {seat.slotId.toUpperCase()}
                   </span>
                   {seat.controller === 'ai' && seat.aiSource === 'custom' && (
-                    <span className="text-[10px] font-bold text-[#1F4E78]">
+                    <span className="text-[10px] font-bold text-[var(--accent)]">
                       Worker 沙箱脚本
                     </span>
                   )}
@@ -370,58 +390,51 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <div className="flex items-center p-0.5 bg-[#EAE5DA] rounded-md">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleUpdateSeat(seat.slotId, { controller: 'ai' })
-                      }
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded transition-colors cursor-pointer ${
-                        seat.controller === 'ai'
-                          ? 'bg-[#222830] text-[#F5F2EB]'
-                          : 'text-[#4F5864] hover:text-[#1C2127]'
+                  <div className="flex items-center gap-1 p-0.5 bg-[var(--surface-secondary)] border border-[var(--border)] rounded-lg">
+                    <Button
+                      size="sm"
+                      variant={seat.controller === 'ai' ? 'primary' : 'ghost'}
+                      onPress={() => handleUpdateSeat(seat.slotId, { controller: 'ai' })}
+                      className={`h-7 px-2 text-[11px] font-semibold ${
+                        seat.controller === 'ai' ? 'accent-solid-btn' : ''
                       }`}
                     >
                       <Bot className="w-3 h-3" aria-hidden="true" />
                       AI
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canBeHuman}
-                      onClick={() =>
-                        handleUpdateSeat(seat.slotId, { controller: 'human' })
-                      }
-                      title={!canBeHuman ? '本地同屏最多支持 2 名人类玩家' : '切换为人类键位操控'}
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold rounded transition-colors ${
-                        seat.controller === 'human'
-                          ? 'bg-white text-[#1C2127] shadow-xs cursor-pointer'
-                          : canBeHuman
-                          ? 'text-[#4F5864] hover:text-[#1C2127] cursor-pointer'
-                          : 'text-[#9AA2AC] cursor-not-allowed'
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={seat.controller === 'human' ? 'primary' : 'ghost'}
+                      isDisabled={!canBeHuman}
+                      onPress={() => handleUpdateSeat(seat.slotId, { controller: 'human' })}
+                      className={`h-7 px-2 text-[11px] font-semibold ${
+                        seat.controller === 'human' ? 'accent-solid-btn' : ''
                       }`}
                     >
                       <User className="w-3 h-3" aria-hidden="true" />
                       玩家
-                    </button>
+                    </Button>
                   </div>
 
                   {seats.length > 2 && (
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      isIconOnly
                       aria-label={`移除席位 ${seat.slotId.toUpperCase()}`}
-                      onClick={() => handleRemoveSeat(seat.slotId)}
-                      className="p-1 text-[#68717D] hover:text-[#B3261E] hover:bg-[#FDECE9] rounded transition-colors cursor-pointer"
+                      onPress={() => handleRemoveSeat(seat.slotId)}
+                      className="min-w-[32px] h-8 text-[var(--muted)] hover:text-red-500"
                     >
                       <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
 
-              {/* 中行：名称输入 + 模型选择 */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+              {/* 中行：名称输入 + HeroUI Select 模型选择 */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
                 <div className="sm:col-span-5">
-                  <input
+                  <Input
                     type="text"
                     maxLength={16}
                     data-testid={`brawl-seat-name-${seat.slotId}`}
@@ -431,20 +444,20 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                     onChange={(e) =>
                       handleUpdateSeat(seat.slotId, { name: e.target.value })
                     }
-                    className={`w-full px-2.5 py-1.5 text-xs bg-white border rounded-md text-[#1C2127] placeholder:text-[#8E96A0] focus:outline-none focus:ring-2 focus:ring-[#1C2127]/20 ${
-                      nameError ? 'border-[#C93420]' : 'border-[#CFC8BA]'
+                    className={`w-full min-h-[40px] max-sm:min-h-[44px] px-3 text-xs bg-[var(--field-background)] text-[var(--field-foreground)] border rounded-lg ${
+                      nameError ? 'border-red-500' : 'border-[var(--field-border)]'
                     }`}
                   />
                 </div>
 
                 <div className="sm:col-span-7">
                   {seat.controller === 'ai' ? (
-                    <select
-                      data-testid={`brawl-seat-model-${seat.slotId}`}
-                      aria-label={`${seat.slotId.toUpperCase()} 选择 AI 模型`}
+                    <AppSelect
+                      ariaLabel={`${seat.slotId.toUpperCase()} 选择 AI 模型`}
+                      testId={`brawl-seat-model-${seat.slotId}`}
                       value={selectValue}
-                      onChange={(e) => {
-                        const raw = e.target.value;
+                      groups={modelSelectGroups}
+                      onChange={(raw) => {
                         if (raw.startsWith('custom:')) {
                           const cid = raw.slice('custom:'.length);
                           const target = customBotScripts.find((c) => c.id === cid);
@@ -461,28 +474,9 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                           });
                         }
                       }}
-                      className="w-full px-2.5 py-1.5 text-xs font-semibold bg-white border border-[#CFC8BA] rounded-md text-[#1C2127] focus:outline-none focus:ring-2 focus:ring-[#1C2127]/20"
-                    >
-                      {customBotScripts.length > 0 && (
-                        <optgroup label="自定义大模型脚本库">
-                          {customBotScripts.map((c) => (
-                            <option key={c.id} value={`custom:${c.id}`}>
-                              [自定义] {c.name}（{c.tierLabel}
-                              {c.validation.status === 'verified' ? ' · 已校验' : ''}）
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      <optgroup label="内置 TS 策略脚本">
-                        {builtinModels.map((m) => (
-                          <option key={m.id} value={`builtin:${m.id}`}>
-                            [内置 Lv.{m.difficultyLevel}] {m.name} · {m.difficultyLabel}
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
+                    />
                   ) : (
-                    <div className="h-full flex items-center px-2.5 py-1.5 text-[11px] font-medium text-[#3A424C] bg-[#EFECE3] border border-[#DDD7C9] rounded-md">
+                    <div className="min-h-[40px] flex items-center px-3 py-1.5 text-[11px] font-medium text-[var(--muted)] bg-[var(--surface-secondary)] border border-[var(--border)] rounded-lg">
                       复用本地键盘配置：{humanOrdinal === 1 ? 'P1 键位（WASD + 空格）' : 'P2 键位（方向键 + Enter）'}
                     </div>
                   )}
@@ -491,7 +485,7 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
 
               {/* 底行：8 色涂装选择 */}
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {PLAYER_COLOR_PALETTE.map((opt) => {
                     const selected =
                       seat.colorHex.toLowerCase() === opt.hex.toLowerCase();
@@ -505,9 +499,9 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                         onClick={() =>
                           handleUpdateSeat(seat.slotId, { colorHex: opt.hex })
                         }
-                        className={`w-6 h-6 rounded flex items-center justify-center transition-transform ${
+                        className={`w-6 h-6 rounded-md flex items-center justify-center transition-transform ${
                           selected
-                            ? 'ring-2 ring-offset-1 ring-[#1C2127] scale-105'
+                            ? 'ring-2 ring-offset-1 ring-[var(--foreground)] ring-offset-[var(--surface)] scale-105'
                             : taken
                             ? 'opacity-30 cursor-not-allowed'
                             : 'hover:scale-105 cursor-pointer'
@@ -525,7 +519,7 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                   })}
                 </div>
                 {colorError && (
-                  <span className="text-[11px] font-semibold text-[#B3261E]">
+                  <span className="text-[11px] font-semibold text-red-600 dark:text-red-400">
                     {colorError}
                   </span>
                 )}

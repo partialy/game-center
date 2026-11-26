@@ -297,7 +297,7 @@ export function MobileViewportProvider({ children }: { children: ReactNode }) {
         <div
           data-testid="mobile-landscape-shell"
           data-rotated="true"
-          className="fixed inset-0 overflow-hidden bg-[#040712]"
+          className="fixed inset-0 overflow-hidden bg-[var(--background)] text-[var(--foreground)]"
         >
           <div style={stageStyle}>{children}</div>
         </div>

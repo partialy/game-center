@@ -46,6 +46,7 @@ import {
 } from '../platform/debug/perfMonitor';
 import {
   appendMatchHistory,
+  clearMatchHistory,
   createDemoMatchHistory,
   loadMatchHistory,
   type MatchHistoryRecord,
@@ -139,6 +140,7 @@ export default function App() {
 
   // 视图与对局快照状态
   const [view, setView] = useState<AppView>('lobby');
+  const [settingsReturnView, setSettingsReturnView] = useState<'lobby' | 'setup'>('lobby');
   const [activeSnapshot, setActiveSnapshot] =
     useState<MatchLaunchSnapshot<Record<string, unknown>> | null>(null);
   const [lastResult, setLastResult] = useState<MatchResultEvent | null>(null);
@@ -156,6 +158,12 @@ export default function App() {
       saveDevDebugMode(next);
       return next;
     });
+  }, []);
+
+  const handleClearMatchHistory = useCallback(() => {
+    clearMatchHistory();
+    setMatchHistory([]);
+    setActiveHistoryId(null);
   }, []);
 
   const ruleIssues = useMemo(
@@ -739,6 +747,7 @@ export default function App() {
           }}
           onEnterSettings={(gameId) => {
             handleSelectGame(gameId);
+            setSettingsReturnView('lobby');
             setView('settings');
           }}
           onQuickStart={(gameId) => {
@@ -767,6 +776,10 @@ export default function App() {
           arenaSeats={arenaSeats}
           onArenaSeatsChange={handleArenaSeatsChange}
           onOpenAiStudio={(tab) => openAiStudio(tab ?? 'prompt')}
+          onOpenSettings={() => {
+            setSettingsReturnView('setup');
+            setView('settings');
+          }}
           profiles={profiles}
           bindingsBySlot={bindingsBySlot}
           rules={rulesDraft}
@@ -815,7 +828,7 @@ export default function App() {
           activePresetId={activePresetId}
           ruleIssues={ruleIssues}
           storageNotice={storageNotice}
-          onBack={() => setView('lobby')}
+          onBack={() => setView(settingsReturnView)}
           onProfileChange={handleProfileChange}
           onBindingChange={handleBindingChange}
           onResetBindings={handleResetBindings}
@@ -827,6 +840,8 @@ export default function App() {
           onResetGroupRules={handleResetGroupRules}
           devDebugMode={devDebugMode}
           onToggleDevDebugMode={handleToggleDevDebugMode}
+          matchHistoryCount={matchHistory.length}
+          onClearMatchHistory={handleClearMatchHistory}
         />
         {aiStudioOverlay}
       </>
@@ -900,6 +915,8 @@ export default function App() {
             onResetGroupRules={handleResetGroupRules}
             devDebugMode={devDebugMode}
             onToggleDevDebugMode={handleToggleDevDebugMode}
+            matchHistoryCount={matchHistory.length}
+            onClearMatchHistory={handleClearMatchHistory}
           />
         )}
         {aiStudioOverlay}

@@ -1,4 +1,12 @@
-import { AlertCircle, ArrowLeft, Bot, Code2, Play, Swords, Users } from 'lucide-react';
+import { Button } from '@heroui/react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  Code2,
+  Play,
+  SlidersHorizontal,
+} from 'lucide-react';
 import type {
   ArenaSeatConfig,
   CustomBotScriptRecord,
@@ -15,9 +23,10 @@ import {
   validatePlayerColors,
   validatePlayerName,
 } from '../input/bindings';
-import { RulesForm } from '../settings/RulesForm';
+import { RulePresetsPanel, RulesForm } from '../settings/RulesForm';
 import { ArenaRosterPanel, validateArenaSeats } from './ArenaRosterPanel';
 import { PlayerSetupPanel, resolveSlotController } from './PlayerSetupPanel';
+import { AppSelect, ModeTabs, ThemeQuickToggle } from './heroUiHelpers';
 
 interface PreMatchViewProps<TRules extends Record<string, unknown>> {
   game: GameDefinition<TRules, unknown>;
@@ -31,6 +40,7 @@ interface PreMatchViewProps<TRules extends Record<string, unknown>> {
   arenaSeats: ArenaSeatConfig[];
   onArenaSeatsChange: (next: ArenaSeatConfig[]) => void;
   onOpenAiStudio: (tab?: 'prompt' | 'editor') => void;
+  onOpenSettings: () => void;
   profiles: PlayerProfile[];
   bindingsBySlot: Record<PlayerSlotId, Record<string, string>>;
   rules: TRules;
@@ -52,10 +62,10 @@ interface PreMatchViewProps<TRules extends Record<string, unknown>> {
 }
 
 /**
- * 赛前配置页：
- * - 顶部支持随时切换「单人游戏 / 多人游戏 / AI 乱斗」，对应独立的规则存档与预设列表
- * - 左侧配置玩家资料或 2～8 席多 AI 乱斗阵容，一键直达 AI 脚本工坊
- * - 右侧配置当前模式独立的规则预设、地图编号及七类规则分组
+ * 对战备战台（赛前配置页）：
+ * - 固定精简顶栏：圆形返回 + 标题 | 圆形主题、AI工坊、药丸模式分段器、开战主按钮
+ * - 左侧主战席位区：P1/P2 对抗备战卡 或 2～8 席 AI 乱斗阵容
+ * - 右侧精简核心规则区：规则预设 + 赛制/地图/操控三项核心配置 + 前往设置中心入口
  */
 export function PreMatchView<TRules extends Record<string, unknown>>({
   game,
@@ -69,6 +79,7 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
   arenaSeats,
   onArenaSeatsChange,
   onOpenAiStudio,
+  onOpenSettings,
   profiles,
   bindingsBySlot,
   rules,
@@ -120,140 +131,103 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
   if (ruleHasError) blockerReasons.push('规则参数存在错误');
 
   const startButtonLabel = isBrawl
-    ? `开始 ${arenaSeats.length} 席 AI 乱斗`
+    ? `开始 ${arenaSeats.length} 席乱斗`
     : gameMode === 'single' && singleMatchup === 'ai_vs_ai'
     ? '开始 AI 观战'
     : '开始比赛';
 
+  const hasControlMode = typeof rules.controlMode === 'string';
+  const activeControlModeMeta = TANK_CONTROL_MODE_OPTIONS.find(
+    (opt) => opt.value === rules.controlMode
+  );
+
   return (
-    <div className="min-h-full drafting-surface flex flex-col">
-      {/* 顶部操作栏 */}
-      <div className="sticky top-0 z-20 bg-[#F4F1EA]/95 border-b border-[#D8D2C5] px-3 sm:px-6 py-2 sm:py-3.5">
-        <div className="max-w-[1360px] mx-auto flex flex-wrap items-center justify-between gap-2 sm:gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            <button
-              type="button"
-              onClick={onBackToLobby}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#3A424C] bg-[#EAE5DA] hover:bg-[#DFD9CB] rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+    <div className="min-h-full drafting-surface flex flex-col text-[var(--foreground)]">
+      {/* 精简统一顶栏：圆形返回 + 标题 | 圆形主题、AI工坊、药丸分段器、主开战按钮 */}
+      <header className="sticky top-0 z-20 min-h-[56px] bg-[var(--surface)]/95 border-b border-[var(--border)] px-3 sm:px-6 py-2 flex items-center">
+        <div className="max-w-[1360px] w-full mx-auto flex flex-wrap items-center justify-between gap-2.5 sm:gap-4">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Button
+              variant="secondary"
+              size="sm"
+              isIconOnly
+              onPress={onBackToLobby}
+              aria-label="返回大厅"
+              className="!w-9 !h-9 !min-w-[36px] !p-0 !rounded-full shrink-0"
             >
-              <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-              返回大厅
-            </button>
-            <div className="min-w-0">
-              <h1 className="font-display text-xl font-extrabold tracking-tight text-[#1C2127] truncate">
-                {game.name} · 赛前配置
-              </h1>
-            </div>
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+            </Button>
+            <h1 className="font-display text-base sm:text-lg font-extrabold tracking-tight text-[var(--foreground)] truncate">
+              {game.name} · 赛前备战
+            </h1>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
-            {/* 单人 / 多人 / AI 乱斗模式切换 */}
-            <div
-              className="flex items-center gap-1 p-1 bg-[#EAE5DA] rounded-lg"
-              role="tablist"
-              aria-label="切换游戏模式"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={gameMode === 'single'}
-                data-testid="prematch-mode-single"
-                onClick={() => onGameModeChange('single')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  gameMode === 'single'
-                    ? 'bg-white text-[#1C2127] shadow-xs'
-                    : 'text-[#4F5864] hover:text-[#1C2127]'
-                }`}
-              >
-                <Bot className="w-3.5 h-3.5" aria-hidden="true" />
-                单人游戏
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={gameMode === 'multi'}
-                data-testid="prematch-mode-multi"
-                onClick={() => onGameModeChange('multi')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  gameMode === 'multi'
-                    ? 'bg-white text-[#1C2127] shadow-xs'
-                    : 'text-[#4F5864] hover:text-[#1C2127]'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" aria-hidden="true" />
-                多人游戏
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={gameMode === 'brawl'}
-                data-testid="prematch-mode-brawl"
-                onClick={() => onGameModeChange('brawl')}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  gameMode === 'brawl'
-                    ? 'bg-white text-[#1C2127] shadow-xs'
-                    : 'text-[#4F5864] hover:text-[#1C2127]'
-                }`}
-              >
-                <Swords className="w-3.5 h-3.5" aria-hidden="true" />
-                AI 乱斗
-              </button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <ThemeQuickToggle testId="prematch-theme-quick-toggle" />
 
             {game.aiSdk && (
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 data-testid="open-ai-studio-btn"
-                onClick={() => onOpenAiStudio('prompt')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-[#F5F2EB] bg-[#222830] hover:bg-[#313A46] rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                onPress={() => onOpenAiStudio('prompt')}
+                className="h-9 px-3.5 !rounded-full whitespace-nowrap shrink-0 font-semibold"
               >
-                <Code2 className="w-3.5 h-3.5 text-[#7DD3FC]" aria-hidden="true" />
-                AI 脚本工坊
+                <Code2 className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+                AI工坊
                 {customBotScripts.length > 0 && (
-                  <span className="font-mono-num text-[#7DD3FC]">
+                  <span className="font-mono-num text-[var(--accent)]">
                     ({customBotScripts.length})
                   </span>
                 )}
-              </button>
+              </Button>
             )}
 
-            {!canStart && (
-              <span className="hidden md:inline-flex items-center gap-1.5 text-xs font-medium text-[#9B2216]">
-                <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
-                {blockerReasons.join(' / ')}
-              </span>
-            )}
-            <button
-              type="button"
+            <ModeTabs
+              gameMode={gameMode}
+              onChange={onGameModeChange}
+              testIdPrefix="prematch"
+            />
+
+            <Button
+              variant="primary"
+              size="sm"
               data-start="true"
-              disabled={!canStart}
-              onClick={onStartMatch}
-              className={`inline-flex items-center gap-2 px-6 py-2.5 text-sm font-bold rounded-lg whitespace-nowrap shrink-0 ${
-                canStart
-                  ? 'text-white bg-[#D9432B] hover:bg-[#BE3620] transition-colors cursor-pointer'
-                  : 'text-[#FAF8F4] bg-[#B8B1A3] cursor-not-allowed'
-              }`}
+              isDisabled={!canStart}
+              onPress={onStartMatch}
+              className="h-9 px-4 !rounded-full font-bold whitespace-nowrap shrink-0 accent-solid-btn"
             >
-              <Play className="w-4 h-4 fill-current" aria-hidden="true" />
+              <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
               {startButtonLabel}
-            </button>
+            </Button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <main className="flex-1 w-full max-w-[1360px] mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-4 sm:space-y-5">
+      <main className="flex-1 w-full max-w-[1360px] mx-auto px-3 sm:px-6 py-4 sm:py-5 space-y-4">
         {storageNotice && (
           <div
             role="status"
-            className="flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-[#8A4B08] bg-[#FCF2DF] border border-[#E7C78C] rounded-lg"
+            className="flex items-center gap-2.5 px-4 py-2.5 text-xs font-medium rounded-xl bg-amber-500/12 border border-amber-500/35 text-amber-800 dark:text-amber-300"
           >
             <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span>{storageNotice}</span>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-7 items-start">
-          <div className="lg:col-span-5">
+        {!canStart && (
+          <div
+            role="alert"
+            className="flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400"
+          >
+            <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span>开战前请先修正：{blockerReasons.join(' / ')}</span>
+          </div>
+        )}
+
+        {/* 对战备战台双栏布局：左侧席位与阵营（7列），右侧规则预设 + 核心规则 + 设置跳转（5列） */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          <section className="lg:col-span-7 min-w-0">
             {isBrawl ? (
               <ArenaRosterPanel
                 game={game}
@@ -284,54 +258,91 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
                 aiModelBySlot={aiModelBySlot}
                 onAiModelChange={onAiModelChange}
                 onOpenAiStudio={game.aiSdk ? onOpenAiStudio : undefined}
-                controlMode={typeof rules.controlMode === 'string' ? rules.controlMode : undefined}
-                controlModeOptions={
-                  typeof rules.controlMode === 'string' ? TANK_CONTROL_MODE_OPTIONS : undefined
-                }
-                onControlModeChange={(mode) =>
-                  onChangeRules({ ...rules, controlMode: mode } as TRules)
-                }
                 onProfileChange={onProfileChange}
                 onBindingChange={onBindingChange}
                 onResetBindings={onResetBindings}
               />
             )}
-          </div>
+          </section>
 
-          <div className="lg:col-span-7 space-y-3">
-            <div
-              data-testid="prematch-rules-scope-banner"
-              className="flex items-center justify-between gap-3 px-3.5 py-2 rounded-lg bg-[#EFECE3] border border-[#D8D2C5] text-xs text-[#4A535E]"
-            >
-              <span>
-                当前编辑并独立保存：
-                <strong className="text-[#1C2127] ml-1">
-                  {gameMode === 'single'
-                    ? '单人模式专属规则与预设'
-                    : gameMode === 'brawl'
-                    ? 'AI 乱斗模式专属规则与预设'
-                    : '多人模式专属规则与预设'}
-                </strong>
-              </span>
-              <span className="text-[11px] text-[#6B7480] whitespace-nowrap">
-                三套模式独立存档互不干扰
-              </span>
-            </div>
-
-            <RulesForm
-              game={game}
-              rules={rules}
+          <aside className="lg:col-span-5 min-w-0 space-y-4">
+            {/* 1. 规则预设 */}
+            <RulePresetsPanel
               presets={presets}
               activePresetId={activePresetId}
               issues={ruleIssues}
-              onChangeRules={onChangeRules}
               onSelectPreset={onSelectPreset}
               onSaveNewPreset={onSaveNewPreset}
               onDeletePreset={onDeletePreset}
               onResetAllRules={onResetAllRules}
-              onResetGroupRules={onResetGroupRules}
             />
-          </div>
+
+            {/* 2. 核心规则（操控模式 + 赛制/地图） */}
+            <div className="space-y-3">
+              {hasControlMode && (
+                <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 space-y-2">
+                  <AppSelect
+                    label="操控模式"
+                    ariaLabel="操控模式"
+                    testId="prematch-control-mode-select"
+                    value={String(rules.controlMode)}
+                    options={TANK_CONTROL_MODE_OPTIONS.map((opt) => ({
+                      value: opt.value,
+                      label: opt.label,
+                    }))}
+                    onChange={(mode) =>
+                      onChangeRules({ ...rules, controlMode: mode } as TRules)
+                    }
+                  />
+                  {activeControlModeMeta && (
+                    <p className="text-[11px] leading-relaxed text-[var(--muted)]">
+                      {activeControlModeMeta.description}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <RulesForm
+                game={game}
+                rules={rules}
+                presets={presets}
+                activePresetId={activePresetId}
+                issues={ruleIssues}
+                filterGroupIds={['match', 'map']}
+                hideHeader
+                hidePresetBar
+                onChangeRules={onChangeRules}
+                onSelectPreset={onSelectPreset}
+                onSaveNewPreset={onSaveNewPreset}
+                onDeletePreset={onDeletePreset}
+                onResetAllRules={onResetAllRules}
+                onResetGroupRules={onResetGroupRules}
+              />
+            </div>
+
+            {/* 3. 高级参数跳转入口 */}
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl px-4 py-3.5 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-[var(--foreground)]">
+                  更多高级参数
+                </div>
+                <p className="text-[11px] text-[var(--muted)] mt-0.5 truncate">
+                  道具池、弹道物理、移动手感与画质音效
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="prematch-open-settings-btn"
+                onPress={onOpenSettings}
+                className="h-9 px-3.5 !rounded-full font-semibold shrink-0 whitespace-nowrap"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+                设置中心
+                <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+              </Button>
+            </div>
+          </aside>
         </div>
       </main>
     </div>
@@ -342,8 +353,7 @@ const TANK_CONTROL_MODE_OPTIONS = [
   {
     value: 'intuitive',
     label: '直觉转向（推荐）',
-    description:
-      '按屏幕上下左右及 45° 斜向移动，炮口沿最短圆弧平滑转向；轻点方向优先微调角度，转向中任意瞬间开火可打出 360° 弹道。',
+    description: '按方向键直接朝 8 个方向移动，炮口自动平滑跟随并可随时开火。',
   },
   {
     value: 'classic',
@@ -365,4 +375,3 @@ function resolveActionsForControlMode(
     return a;
   });
 }
-

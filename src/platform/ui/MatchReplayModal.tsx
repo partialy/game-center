@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@heroui/react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -323,14 +324,14 @@ export function MatchReplayModal({
       aria-modal="true"
       aria-label="对局录像回放"
       data-testid="match-replay-modal"
-      className="fixed inset-0 z-50 bg-[#14181E]/75 flex items-center justify-center p-3 sm:p-6"
+      className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-3 sm:p-6"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-5xl max-h-[92%] bg-[#FAF8F4] border border-[#D4CEC0] rounded-xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="w-full max-w-5xl max-h-[92%] bg-[var(--overlay)] text-[var(--foreground)] border border-[var(--border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
         {/* 顶部栏：回合、时间、实时双方状态（比分 + 弹药 + 当前道具）与关闭 */}
-        <header className="px-5 py-3 bg-[#222830] text-[#F5F2EB] flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <header className="px-5 py-3 bg-[#181E29] text-[#F5F2EB] flex flex-wrap items-center justify-between gap-3 shrink-0 border-b border-white/10">
           <div className="flex items-center gap-2.5 min-w-0">
             <Film className="w-4 h-4 text-[#F2A65A] shrink-0" aria-hidden="true" />
             <h2 className="font-display text-base font-bold tracking-tight truncate">
@@ -393,14 +394,16 @@ export function MatchReplayModal({
               })}
             </div>
 
-            <button
-              type="button"
-              onClick={onClose}
+            <Button
+              variant="secondary"
+              size="sm"
+              isIconOnly
+              onPress={onClose}
               aria-label="关闭录像回放"
-              className="w-8 h-8 rounded-md bg-white/10 hover:bg-white/20 text-[#F5F2EB] inline-flex items-center justify-center transition-colors cursor-pointer"
+              className="min-w-[32px] h-8"
             >
               <X className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
         </header>
 
@@ -455,20 +458,20 @@ export function MatchReplayModal({
           </div>
 
           {/* 右侧：精彩事件日志时间线（点击可一键跳转） */}
-          <aside className="border-t lg:border-t-0 lg:border-l border-[#D6CFC0] bg-[#FAF8F4] flex flex-col min-h-[180px] max-h-[260px] lg:max-h-none overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-[#E3DDD0] flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-[#1C2127]">
-                <Sparkles className="w-3.5 h-3.5 text-[#D9432B]" aria-hidden="true" />
+          <aside className="border-t lg:border-t-0 lg:border-l border-[var(--border)] bg-[var(--surface)] flex flex-col min-h-[180px] max-h-[260px] lg:max-h-none overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-[var(--separator)] flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-[var(--foreground)]">
+                <Sparkles className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
                 <span>精彩事件日志</span>
               </div>
-              <span className="text-[11px] font-mono-num text-[#68717D]">
+              <span className="text-[11px] font-mono-num text-[var(--muted)]">
                 共 {highlights.length} 个瞬间
               </span>
             </div>
 
             <div
               data-testid="replay-event-log"
-              className="flex-1 overflow-y-auto divide-y divide-[#ECE7DC]"
+              className="flex-1 overflow-y-auto divide-y divide-[var(--separator)]"
             >
               {highlights.map((ev) => {
                 const isExact = ev.index === currentIndex;
@@ -482,10 +485,10 @@ export function MatchReplayModal({
                     onClick={() => jumpToIndex(ev.index)}
                     className={`w-full text-left px-4 py-2.5 transition-colors flex items-start justify-between gap-2.5 cursor-pointer ${
                       isExact
-                        ? 'bg-[#EFE9DC]'
+                        ? 'bg-[var(--accent)]/14'
                         : isLatest
-                        ? 'bg-[#F6F2E8]'
-                        : 'hover:bg-[#F3EFE6]'
+                        ? 'bg-[var(--surface-secondary)]/85'
+                        : 'hover:bg-[var(--surface-secondary)]/55'
                     }`}
                   >
                     <div className="min-w-0 space-y-0.5">
@@ -495,16 +498,16 @@ export function MatchReplayModal({
                           style={{ backgroundColor: ev.actorColorHex ?? '#4B5560' }}
                           aria-hidden="true"
                         />
-                        <span className="text-[11px] font-bold text-[#4B5560]">
+                        <span className="text-[11px] font-bold text-[var(--muted)]">
                           R{ev.roundNumber} · {kindLabel}
                         </span>
                       </div>
-                      <p className="text-xs font-semibold text-[#1C2127] truncate">
+                      <p className="text-xs font-semibold text-[var(--foreground)] truncate">
                         {ev.headline ?? kindLabel}
                       </p>
                     </div>
 
-                    <span className="text-[11px] font-mono-num text-[#68717D] shrink-0 pt-0.5">
+                    <span className="text-[11px] font-mono-num text-[var(--muted)] shrink-0 pt-0.5">
                       {formatReplayTimestamp(ev.battleTime)}
                     </span>
                   </button>
@@ -512,7 +515,7 @@ export function MatchReplayModal({
               })}
             </div>
 
-            <div className="shrink-0 px-4 py-2 border-t border-[#E3DDD0] text-[10px] font-mono-num text-[#7B8490] flex items-center justify-between">
+            <div className="shrink-0 px-4 py-2 border-t border-[var(--separator)] text-[10px] font-mono-num text-[var(--muted)] flex items-center justify-between">
               <span className="truncate">{mapCode}</span>
               <span>Space 播放 · ←/→ 步进</span>
             </div>
@@ -520,7 +523,7 @@ export function MatchReplayModal({
         </div>
 
         {/* 底部步进与时间轴控制条 */}
-        <div className="shrink-0 px-5 py-3.5 bg-[#F3EFE6] border-t border-[#D6CFC0] space-y-3">
+        <div className="shrink-0 px-5 py-3.5 bg-[var(--surface-secondary)]/80 border-t border-[var(--border)] space-y-3">
           {/* 进度条 + 精彩事件节点标尺 */}
           <div className="relative pt-2.5 pb-1">
             {/* 精彩事件标记点 */}
@@ -567,46 +570,49 @@ export function MatchReplayModal({
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* 步进与播放控制 */}
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={handleRestart}
-                title="从头重播"
+              <Button
+                variant="secondary"
+                size="sm"
+                isIconOnly
+                onPress={handleRestart}
                 aria-label="从头重播"
-                className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-[#CFC8BA] bg-white hover:bg-[#ECE7DC] text-[#2C333B] transition-colors cursor-pointer"
+                className="min-w-[34px] h-8"
               >
                 <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
+              </Button>
 
-              <button
-                type="button"
-                onClick={() => handleJumpHighlight(-1)}
-                disabled={currentIndex <= 0}
-                title="上一个精彩瞬间"
+              <Button
+                variant="secondary"
+                size="sm"
+                onPress={() => handleJumpHighlight(-1)}
+                isDisabled={currentIndex <= 0}
                 aria-label="上一个精彩瞬间"
-                className="inline-flex items-center gap-1 px-2.5 h-8 text-xs font-semibold rounded-md border border-[#CFC8BA] bg-white hover:bg-[#ECE7DC] disabled:opacity-40 text-[#2C333B] transition-colors cursor-pointer"
+                className="h-8 text-xs font-semibold"
               >
                 <SkipBack className="w-3.5 h-3.5" aria-hidden="true" />
                 <span className="hidden sm:inline">上一精彩</span>
-              </button>
+              </Button>
 
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 data-testid="replay-step-prev"
-                onClick={() => handleStep(-1)}
-                disabled={currentIndex <= 0}
+                onPress={() => handleStep(-1)}
+                isDisabled={currentIndex <= 0}
                 aria-label="上一步"
-                className="inline-flex items-center gap-1 px-2.5 h-8 text-xs font-semibold rounded-md border border-[#CFC8BA] bg-white hover:bg-[#ECE7DC] disabled:opacity-40 text-[#2C333B] transition-colors cursor-pointer"
+                className="h-8 text-xs font-semibold"
               >
                 <ChevronLeft className="w-3.5 h-3.5" aria-hidden="true" />
                 上一步
-              </button>
+              </Button>
 
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="sm"
                 data-testid="replay-play-toggle"
-                onClick={handleTogglePlay}
-                disabled={totalCount <= 1}
-                className="inline-flex items-center gap-1.5 px-4 h-8 text-xs font-bold rounded-md bg-[#D9432B] hover:bg-[#BE3620] disabled:opacity-40 text-white transition-colors cursor-pointer whitespace-nowrap"
+                onPress={handleTogglePlay}
+                isDisabled={totalCount <= 1}
+                className="h-8 px-4 text-xs font-bold whitespace-nowrap accent-solid-btn"
               >
                 {playing ? (
                   <>
@@ -619,55 +625,59 @@ export function MatchReplayModal({
                     播放动画
                   </>
                 )}
-              </button>
+              </Button>
 
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 data-testid="replay-step-next"
-                onClick={() => handleStep(1)}
-                disabled={currentIndex >= totalCount - 1}
+                onPress={() => handleStep(1)}
+                isDisabled={currentIndex >= totalCount - 1}
                 aria-label="下一步"
-                className="inline-flex items-center gap-1 px-2.5 h-8 text-xs font-semibold rounded-md border border-[#CFC8BA] bg-white hover:bg-[#ECE7DC] disabled:opacity-40 text-[#2C333B] transition-colors cursor-pointer"
+                className="h-8 text-xs font-semibold"
               >
                 下一步
                 <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
+              </Button>
 
-              <button
-                type="button"
-                onClick={() => handleJumpHighlight(1)}
-                disabled={currentIndex >= totalCount - 1}
-                title="下一个精彩瞬间"
+              <Button
+                variant="secondary"
+                size="sm"
+                onPress={() => handleJumpHighlight(1)}
+                isDisabled={currentIndex >= totalCount - 1}
                 aria-label="下一个精彩瞬间"
-                className="inline-flex items-center gap-1 px-2.5 h-8 text-xs font-semibold rounded-md border border-[#CFC8BA] bg-white hover:bg-[#ECE7DC] disabled:opacity-40 text-[#2C333B] transition-colors cursor-pointer"
+                className="h-8 text-xs font-semibold"
               >
                 <span className="hidden sm:inline">下一精彩</span>
                 <SkipForward className="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
+              </Button>
             </div>
 
             {/* 倍速切换与帧步进计数 */}
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-0.5 p-0.5 bg-[#E4DEC9] rounded-md" role="group" aria-label="回放倍速">
+              <div
+                className="flex items-center gap-1 p-0.5 bg-[var(--surface)] border border-[var(--border)] rounded-lg"
+                role="group"
+                aria-label="回放倍速"
+              >
                 {SPEED_OPTIONS.map((sp) => (
-                  <button
+                  <Button
                     key={sp}
-                    type="button"
-                    onClick={() => setSpeed(sp)}
-                    className={`px-2 py-1 text-[11px] font-mono-num font-semibold rounded transition-colors cursor-pointer ${
-                      speed === sp
-                        ? 'bg-white text-[#1C2127] shadow-xs'
-                        : 'text-[#4F5864] hover:text-[#1C2127]'
+                    size="sm"
+                    variant={speed === sp ? 'primary' : 'ghost'}
+                    onPress={() => setSpeed(sp)}
+                    className={`h-7 min-w-0 px-2 text-[11px] font-mono-num font-bold ${
+                      speed === sp ? 'accent-solid-btn' : ''
                     }`}
                   >
                     {sp}x
-                  </button>
+                  </Button>
                 ))}
               </div>
 
               <span
                 data-testid="replay-step-counter"
-                className="text-xs font-mono-num font-bold text-[#3A424C] whitespace-nowrap"
+                className="text-xs font-mono-num font-bold text-[var(--foreground)] whitespace-nowrap"
               >
                 步进 {currentIndex + 1} / {totalCount}
               </span>

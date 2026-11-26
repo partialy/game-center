@@ -1,10 +1,65 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
+@import "@heroui/styles";
 
 @layer base {
   :root {
     --font-display: 'Outfit', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
     --font-sans: 'Plus Jakarta Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    /* 默认强调色（会被 ThemeProvider 动态覆写） */
+    --accent: #E85D3F;
+    --accent-hover: #D44B2D;
+    --accent-foreground: #FFFFFF;
+    --focus: var(--accent);
+  }
+
+  /* 浅色模式语义表面变量（柔和精密图纸白） */
+  :root,
+  .light,
+  [data-theme="light"] {
+    --background: #F6F4EE;
+    --foreground: #181C22;
+    --surface: #FFFFFF;
+    --surface-foreground: #181C22;
+    --surface-secondary: #EFECE3;
+    --surface-secondary-foreground: #272E37;
+    --surface-tertiary: #E5E0D4;
+    --surface-tertiary-foreground: #181C22;
+    --overlay: #FFFFFF;
+    --overlay-foreground: #181C22;
+    --muted: #5A6370;
+    --border: #DDD7C9;
+    --separator: #E4DFD2;
+    --field-background: #FFFFFF;
+    --field-foreground: #181C22;
+    --field-border: #D2CBB9;
+    --field-border-width: 1px;
+    --surface-grid-line: rgba(24, 28, 34, 0.045);
+  }
+
+  /* 深色模式语义表面变量（高可读暗黑石板） */
+  .dark,
+  [data-theme="dark"] {
+    --background: #0B0F17;
+    --foreground: #F1F5F9;
+    --surface: #131A26;
+    --surface-foreground: #F1F5F9;
+    --surface-secondary: #1B2435;
+    --surface-secondary-foreground: #E2E8F0;
+    --surface-tertiary: #243046;
+    --surface-tertiary-foreground: #F8FAFC;
+    --overlay: #161F2E;
+    --overlay-foreground: #F1F5F9;
+    --muted: #94A3B8;
+    --border: #273449;
+    --separator: #222E42;
+    --field-background: #0F1520;
+    --field-foreground: #F1F5F9;
+    --field-border: #2E3D56;
+    --field-border-width: 1px;
+    --surface-grid-line: rgba(241, 245, 249, 0.045);
   }
 
   html,
@@ -12,6 +67,8 @@
   #root {
     height: 100%;
     font-family: var(--font-sans);
+    background-color: var(--background);
+    color: var(--foreground);
     overscroll-behavior: none;
   }
 
@@ -39,13 +96,30 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Custom subtle drafting-board grid background for non-arena views */
+/* 自适应浅色 / 深色模式的细网格表面 */
 .drafting-surface {
-  background-color: #F4F1EA;
+  background-color: var(--background);
+  color: var(--foreground);
   background-image:
-    linear-gradient(to right, rgba(28, 33, 39, 0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(28, 33, 39, 0.04) 1px, transparent 1px);
+    linear-gradient(to right, var(--surface-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--surface-grid-line) 1px, transparent 1px);
   background-size: 28px 28px;
+}
+
+/* HeroUI 按钮强调色动态绑定与中性次按钮高对比修正 */
+.accent-solid-btn {
+  background-color: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+}
+.accent-solid-btn:hover:not(:disabled) {
+  background-color: var(--accent-hover) !important;
+}
+.button--secondary {
+  color: var(--foreground);
+  border: 1px solid var(--border);
+}
+.button--secondary:hover:not(:disabled) {
+  background-color: var(--surface-secondary);
 }
 
 @keyframes cosmic-panel-enter {

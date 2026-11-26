@@ -30,7 +30,9 @@ import { hasLineOfSight } from './simulation/collision';
 import { TankBattleSession } from './simulation/world';
 import {
   CELL_SIZE,
+  FRAG_SHARD_RADIUS,
   NORMAL_BULLET_RADIUS,
+  SPECIAL_BULLET_RADIUS,
   TANK_BARREL_LENGTH,
   TANK_RADIUS,
   WALL_THICKNESS,
@@ -799,5 +801,71 @@ test('弹药平衡与对局统计：普通弹 6s、散弹 4s、碎片弹 6 枚/3
     'round_end'
   );
 });
+
+test('弹体尺寸规范：普通弹、连发普通弹与散弹减半为 2.5px，特殊弹（追踪/破片母弹 6px、破片碎片 4px）保持原尺寸', () => {
+  assert.equal(NORMAL_BULLET_RADIUS, 2.5);
+  assert.equal(SPECIAL_BULLET_RADIUS, 6);
+  assert.equal(FRAG_SHARD_RADIUS, 4);
+
+  const session = new TankBattleSession(makeSnapshot({ maxDropsOnField: 0 }));
+  const world = session.getWorldState();
+  world.maze.walls = world.maze.walls.filter(
+    (w) =>
+      w.y1 === 0 ||
+      w.y1 === world.maze.height ||
+      w.x1 === 0 ||
+      w.x1 === world.maze.width
+  );
+  const p1 = world.tanks[0];
+  p1.x = 200;
+  p1.y = 250;
+  p1.angle = 0;
+  world.tanks[1].x = 850;
+  world.tanks[1].y = 550;
+
+  // 1. 普通弹
+  session.step(DT, createStaticInputFrame({ p1: { fire: { justPressed: true } } }));
+  assert.equal(world.projectiles[0].source, 'normal');
+  assert.equal(world.projectiles[0].radius, 2.5);
+
+  // 2. 连发普通弹
+  world.projectiles = [];
+  p1.fireReadyAt = 0;
+  applyItemPickup(p1, 'rapid_fire', world.battleTime, world.rules);
+  session.step(DT, createStaticInputFrame({ p1: { fire: { held: true } } }));
+  assert.equal(world.projectiles[0].source, 'rapid_fire');
+  assert.equal(world.projectiles[0].radius, 2.5);
+
+  // 3. 散弹（3 颗全为 2.5px）
+  world.projectiles = [];
+  p1.fireReadyAt = 0;
+  p1.ammo = 5;
+  applyItemPickup(p1, 'shotgun', world.battleTime, world.rules);
+  session.step(DT, createStaticInputFrame({ p1: { fire: { justPressed: true } } }));
+  assert.equal(world.projectiles.length, 3);
+  assert.ok(world.projectiles.every((pr) => pr.source === 'shotgun' && pr.radius === 2.5));
+
+  // 4. 追踪弹（保持 6px）
+  world.projectiles = [];
+  p1.fireReadyAt = 0;
+  applyItemPickup(p1, 'homing', world.battleTime, world.rules);
+  session.step(DT, createStaticInputFrame({ p1: { fire: { justPressed: true } } }));
+  assert.equal(world.projectiles[0].source, 'homing');
+  assert.equal(world.projectiles[0].radius, 6);
+
+  // 5. 破片母弹（保持原尺寸 7px）与破片碎片（保持原尺寸 4px）
+  world.projectiles = [];
+  p1.fireReadyAt = 0;
+  applyItemPickup(p1, 'frag', world.battleTime, world.rules);
+  session.step(DT, createStaticInputFrame({ p1: { fire: { justPressed: true } } }));
+  assert.equal(world.projectiles[0].source, 'frag_parent');
+  assert.equal(world.projectiles[0].radius, 7);
+
+  stepSeconds(session, 1.15);
+  const shards = world.projectiles.filter((pr) => pr.source === 'frag_shard');
+  assert.equal(shards.length, 6);
+  assert.ok(shards.every((sh) => sh.radius === 4));
+});
+
 
 
