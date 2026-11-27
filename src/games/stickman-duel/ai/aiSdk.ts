@@ -29,7 +29,7 @@ export interface StickmanObservation {
     onPlatform: boolean;
     jumpsUsed: number;
     maxJumps: number;
-    weapon: { kind: 'sword' | 'pistol' | 'rocket'; remaining: number; max: number } | null;
+    weapon: { kind: 'sword' | 'pistol' | 'shotgun' | 'rocket'; remaining: number; max: number } | null;
     nearbyDropId: number | null;
   } | null;
   opponents: Array<{
@@ -47,7 +47,7 @@ export interface StickmanObservation {
   }>;
   pickups: Array<{
     id: number;
-    kind: 'sword' | 'pistol' | 'rocket' | 'medkit';
+    kind: 'sword' | 'pistol' | 'shotgun' | 'rocket' | 'medkit';
     remaining: number;
     max: number;
     x: number;
@@ -56,7 +56,7 @@ export interface StickmanObservation {
   }>;
   projectiles: Array<{
     id: number;
-    kind: 'pistol' | 'rocket';
+    kind: 'pistol' | 'shotgun' | 'rocket';
     ownerSlotId: string;
     x: number;
     y: number;
@@ -83,6 +83,10 @@ export interface StickmanObservation {
     swordDamage: number;
     pistolDamage: number;
     pistolSpeed: number;
+    shotgunPellets: number;
+    shotgunSpreadAngleDeg: number;
+    shotgunDamage: number;
+    shotgunSpeed: number;
     rocketDamage: number;
     rocketSpeed: number;
     rocketGravity: number;
@@ -169,8 +173,14 @@ export function createBot(_ctx: { slotId: string; seed: number; random: () => nu
         wantsSwap = true;
       }
 
-      if (self.weapon && (self.weapon.kind === 'pistol' || self.weapon.kind === 'rocket')) {
-        if (dist < 520) {
+      if (
+        self.weapon &&
+        (self.weapon.kind === 'pistol' ||
+          self.weapon.kind === 'shotgun' ||
+          self.weapon.kind === 'rocket')
+      ) {
+        const maxRange = self.weapon.kind === 'shotgun' ? 360 : 520;
+        if (dist < maxRange) {
           out.moveLeft = target.x < self.x;
           out.moveRight = target.x >= self.x;
           if (self.weapon.kind === 'rocket' && dist > 190) {
@@ -293,6 +303,10 @@ export function buildStickmanObservation(
       swordDamage: world.rules.swordDamage,
       pistolDamage: world.rules.pistolDamage,
       pistolSpeed: world.rules.pistolSpeed,
+      shotgunPellets: world.rules.shotgunPellets,
+      shotgunSpreadAngleDeg: world.rules.shotgunSpreadAngleDeg,
+      shotgunDamage: world.rules.shotgunDamage,
+      shotgunSpeed: world.rules.shotgunSpeed,
       rocketDamage: world.rules.rocketDamage,
       rocketSpeed: world.rules.rocketSpeed,
       rocketGravity: world.rules.rocketGravity,
@@ -313,6 +327,7 @@ export function buildStickmanPromptMarkdown(
 - 道具刷新：${rules.dropSpawnMode === 'center' ? '固定中间点位上方短距掉落' : '全场随机落点上方短距掉落'}
 - 长剑：耐久 \`${rules.swordDurability}\` 点（命中扣 1 点），单斩 \`${rules.swordDamage}\`
 - 手枪：\`${rules.pistolAmmo}\` 发直线，单发 \`${rules.pistolDamage}\`，弹速 \`${rules.pistolSpeed} px/s\`
+- 猎枪：\`${rules.shotgunAmmo}\` 发，单发在 \`${rules.shotgunSpreadAngleDeg}°\` 扇形内随机散射 \`${rules.shotgunPellets}\` 枚小子弹，单枚 \`${rules.shotgunDamage}\` 伤，弹速 \`${rules.shotgunSpeed} px/s\`
 - 火箭筒：\`${rules.rocketAmmo}\` 发受重力抛射，中心伤害 \`${rules.rocketDamage}\`，爆炸半径 \`${rules.rocketBlastRadius}px\`（可炸毁砖块与短平台）
 - 血包：回复最大生命 \`${rules.medkitHealPercent}%\`
 `
@@ -326,7 +341,7 @@ export function buildStickmanPromptMarkdown(
 1. **地形层级**：最底层 \`#\` 为不可破坏基岩，上方 \`B\` 为可被火箭筒炸毁的堆叠砖块，\`=\` 为单向短平台（可自下而上跃过、按 \`aimDown + jump\` 向下穿台，同样可被火箭筒炸毁）。
 2. **动作键位映射**（返回值布尔映射）：
    - \`moveLeft\` / \`moveRight\` / \`aimUp\` / \`aimDown\`：水平移动与 8 向远程瞄准（静止时水平朝前发射）
-   - \`attack\`（左键/X）：空手出拳，手持武器时挥剑或发射手枪/火箭筒
+   - \`attack\`（左键/X）：空手出拳，手持武器时挥剑或发射手枪/猎枪/火箭筒
    - \`kick\`（上键/Y）：高位飞踢与强力击飞（持武器时同样可用）
    - \`jump\`（下键/A）：跳跃、空中二段跳，配合 \`aimDown\` 向下穿短平台
    - \`swap\`（右键/B）：拾取或替换身边武器（替换后旧武器保留剩余耐久/弹药掉落地面）

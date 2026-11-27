@@ -10,6 +10,7 @@ import type {
 export const PICKUP_LABELS: Record<StickPickupKind, string> = {
   sword: '长剑',
   pistol: '手枪',
+  shotgun: '猎枪',
   rocket: '火箭筒',
   medkit: '血包',
 };
@@ -17,6 +18,7 @@ export const PICKUP_LABELS: Record<StickPickupKind, string> = {
 export const PICKUP_ACCENTS: Record<StickPickupKind, string> = {
   sword: '#38BDF8',
   pistol: '#F59E0B',
+  shotgun: '#EA580C',
   rocket: '#EF4444',
   medkit: '#10B981',
 };
@@ -51,6 +53,8 @@ export function getWeaponMaxCharges(kind: StickWeaponKind, rules: StickmanDuelRu
       return Math.max(1, Math.round(rules.swordDurability));
     case 'pistol':
       return Math.max(1, Math.round(rules.pistolAmmo));
+    case 'shotgun':
+      return Math.max(1, Math.round(rules.shotgunAmmo));
     case 'rocket':
       return Math.max(1, Math.round(rules.rocketAmmo));
   }

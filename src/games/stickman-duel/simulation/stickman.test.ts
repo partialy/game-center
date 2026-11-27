@@ -410,3 +410,98 @@ test('旧规则平滑迁移：补齐随机刷新与 0.1s 受伤无敌，并将�
   const resCustom = migrateStickmanRules(customLegacy);
   assert.equal(resCustom.rules.swordDurability, 12);
 });
+
+test('猎枪默认 2 发子弹，单发在 30° 扇形内随机射出 3 枚小子弹，且同发贴脸多弹命中与后续无敌保护兼容', () => {
+  const defaults = getDefaultStickmanRules();
+  assert.equal(defaults.enableShotgun, true);
+  assert.equal(defaults.shotgunAmmo, 2);
+  assert.equal(defaults.shotgunPellets, 3);
+  assert.equal(defaults.shotgunSpreadAngleDeg, 30);
+
+  const session = createTestSession();
+  const world = session.getWorldState();
+  const [p1, p2] = world.fighters;
+  p1.x = 220;
+  p1.y = 300;
+  p2.x = 950;
+  p2.y = 300;
+  p1.facing = 1;
+  p1.weapon = { kind: 'shotgun', remaining: defaults.shotgunAmmo, max: defaults.shotgunAmmo };
+
+  // 第一发：应射出 3 枚小子弹，消耗 1 发（2 -> 1）
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 4; i += 1) {
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+
+  const firstVolley = world.projectiles.filter((pr) => pr.kind === 'shotgun');
+  assert.equal(firstVolley.length, 3, '猎枪单发应发出 3 枚小子弹');
+  assert.equal(p1.weapon?.remaining, 1, '猎枪发射第 1 发后应剩余 1 发');
+
+  const anglesDeg: number[] = [];
+  for (const pellet of firstVolley) {
+    assert.equal(pellet.gravityScale, 0, '猎枪小子弹应为直线飞行');
+    assert.ok(pellet.volleyId !== undefined, '同发散弹应携带同一 volleyId');
+    const deg = (Math.atan2(pellet.vy, pellet.vx) * 180) / Math.PI;
+    assert.ok(
+      Math.abs(deg) <= 15 + 1e-6,
+      `猎枪弹丸方向应在 30° 扇形内（±15°），实际为 ${deg.toFixed(2)}°`
+    );
+    anglesDeg.push(deg);
+  }
+  assert.equal(
+    new Set(firstVolley.map((p) => p.volleyId)).size,
+    1,
+    '同一发猎枪的 3 枚弹丸应共享相同 volleyId'
+  );
+
+  // 第二发：再射出 3 枚小子弹并打空武器槽（1 -> null）
+  world.projectiles.length = 0;
+  p1.attack = null;
+  p1.attackCooldown = 0;
+  p1.x = 220;
+  p1.y = 300;
+  p1.facing = 1;
+
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 4; i += 1) {
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+
+  const secondVolley = world.projectiles.filter((pr) => pr.kind === 'shotgun');
+  assert.equal(secondVolley.length, 3, '猎枪第 2 发同样应发出 3 枚小子弹');
+  assert.equal(p1.weapon, null, '猎枪 2 发打空后应自动卸下武器');
+  const secondAnglesDeg = secondVolley.map((p) => (Math.atan2(p.vy, p.vx) * 180) / Math.PI);
+  for (const deg of secondAnglesDeg) {
+    assert.ok(Math.abs(deg) <= 15 + 1e-6, `第 2 发弹丸方向应在 ±15° 内，实际 ${deg.toFixed(2)}°`);
+  }
+  // 两次随机发散不应完全一模一样
+  assert.notDeepEqual(
+    anglesDeg.map((a) => a.toFixed(3)),
+    secondAnglesDeg.map((a) => a.toFixed(3)),
+    '猎枪 30° 扇形方向应具随机性'
+  );
+
+  // 贴脸齐射测试：同一发 3 枚小弹均命中的情况下应叠加伤害，同时后续其它攻击仍被 0.1s 无敌拦截
+  const closeSession = createTestSession({ hurtInvulnSeconds: 0.1 });
+  const cw = closeSession.getWorldState();
+  const [c1, c2] = cw.fighters;
+  c1.x = 380;
+  c1.y = 580;
+  c1.facing = 1;
+  c2.x = 420;
+  c2.y = 580;
+  c2.facing = -1;
+  c1.weapon = { kind: 'shotgun', remaining: 2, max: 2 };
+
+  closeSession.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 6; i += 1) {
+    cw.hitstopTimer = 0;
+    closeSession.step(1 / 60, createStaticInputFrame({}));
+  }
+  assert.ok(
+    c2.hp <= 100 - defaults.shotgunDamage * 2,
+    `贴脸猎枪齐射应至少命中 2 枚以上弹丸，当前剩余血量 ${c2.hp}`
+  );
+  assert.ok(c2.invulnTimer > 0, '被猎枪命中后仍应触发受伤无敌期以阻挡后续连击');
+});

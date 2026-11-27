@@ -21,7 +21,7 @@ export const stickmanDuelGame: GameDefinition<StickmanDuelRules, StickmanWorld> 
   name: '星渊火柴人决斗',
   subtitle: '可破坏 2D 平台格斗 · 拳脚武器切换 · ABXY 虚拟手柄',
   description:
-    '在底层基岩、可炸毁堆叠砖块与单向短平台构成的 2D 竞技场中展开硬核火柴人血条格斗。支持二段跳与穿台、左拳/上腿/下跳/右换武器、8 向瞄准以及长剑、手枪、火箭筒与血包重力空投。',
+    '在底层基岩、可炸毁堆叠砖块与单向短平台构成的 2D 竞技场中展开硬核火柴人血条格斗。支持二段跳与穿台、左拳/上腿/下跳/右换武器、8 向瞄准以及长剑、手枪、猎枪、火箭筒与血包重力掉落。',
   minPlayers: 2,
   maxPlayers: 8,
   defaultPlayerCount: 2,

@@ -4,9 +4,11 @@ import { PICKUP_ACCENTS, PICKUP_LABELS } from '../simulation/combat';
 import type {
   GroundPickup,
   StickFighter,
+  StickmanDuelRules,
   StickmanTerrain,
   StickmanWorld,
   StickProjectile,
+  StickWeaponKind,
 } from '../types';
 
 function clamp(v: number, min: number, max: number): number {
@@ -509,6 +511,25 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.lineTo(-10, 9);
       ctx.closePath();
       ctx.fill();
+    } else if (drop.kind === 'shotgun') {
+      // 猎枪：木质枪托 + 橙铜机匣 + 双管长枪管 + 护木
+      ctx.rotate(-0.18);
+      ctx.fillStyle = '#9A3412';
+      ctx.beginPath();
+      ctx.moveTo(-13, 0);
+      ctx.lineTo(-5, -2.5);
+      ctx.lineTo(-4, 3);
+      ctx.lineTo(-13, 5.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(-5, -4, 19, 3.6);
+      ctx.fillStyle = '#64748B';
+      ctx.fillRect(-2, -1.2, 16, 2.2);
+      ctx.fillStyle = accent;
+      ctx.fillRect(-5, -3.5, 6, 4.5);
+      ctx.fillStyle = '#B45309';
+      ctx.fillRect(2, 0.5, 8, 3);
     } else if (drop.kind === 'rocket') {
       // 火箭筒筒身
       ctx.fillStyle = '#3F4E3C';
@@ -548,13 +569,14 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     palette: Palette
   ): void {
     for (const f of world.fighters) {
-      this.drawSingleFighter(ctx, f, palette);
+      this.drawSingleFighter(ctx, f, world.rules, palette);
     }
   }
 
   private drawSingleFighter(
     ctx: CanvasRenderingContext2D,
     f: StickFighter,
+    rules: StickmanDuelRules,
     palette: Palette
   ): void {
     ctx.save();
@@ -591,9 +613,13 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.restore();
     }
 
-    // 远程武器 8 向瞄准辅助线（仅在持枪/火箭且存活时）
-    if (f.alive && f.weapon && (f.weapon.kind === 'pistol' || f.weapon.kind === 'rocket')) {
-      this.drawAimGuide(ctx, f);
+    // 远程武器 8 向瞄准辅助线（手枪直线 / 猎枪 30° 扇形 / 火箭抛物线）
+    if (
+      f.alive &&
+      f.weapon &&
+      (f.weapon.kind === 'pistol' || f.weapon.kind === 'shotgun' || f.weapon.kind === 'rocket')
+    ) {
+      this.drawAimGuide(ctx, f, rules);
     }
 
     // 移动到角色锚点（脚底中心）
@@ -724,7 +750,10 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
 
     let weaponAngle = f.facing === 1 ? 0 : Math.PI;
 
-    if (f.weapon && (f.weapon.kind === 'pistol' || f.weapon.kind === 'rocket')) {
+    if (
+      f.weapon &&
+      (f.weapon.kind === 'pistol' || f.weapon.kind === 'shotgun' || f.weapon.kind === 'rocket')
+    ) {
       weaponAngle = Math.atan2(f.aimY, f.aimX);
       const recoil = attack && isActivePhase ? -5 : 0;
       const ux = Math.cos(weaponAngle);
@@ -856,7 +885,7 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
 
   private drawHeldWeapon(
     ctx: CanvasRenderingContext2D,
-    kind: 'sword' | 'pistol' | 'rocket',
+    kind: StickWeaponKind,
     handX: number,
     handY: number,
     angle: number,
@@ -907,6 +936,26 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.fillRect(-2, -4, 14, 2);
       ctx.fillStyle = '#334155';
       ctx.fillRect(-3, 1, 5, 7);
+    } else if (kind === 'shotgun') {
+      // 猎枪（双手平端：胡桃木托 + 橙铜机匣 + 双管长枪管 + 木质护木）
+      const flipY = Math.cos(angle) < 0 ? -1 : 1;
+      ctx.scale(1, flipY);
+      ctx.fillStyle = '#9A3412';
+      ctx.beginPath();
+      ctx.moveTo(-12, -1);
+      ctx.lineTo(-2, -3);
+      ctx.lineTo(-1, 3.5);
+      ctx.lineTo(-12, 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#1E293B';
+      ctx.fillRect(-3, -4.5, 27, 4);
+      ctx.fillStyle = '#64748B';
+      ctx.fillRect(0, -1, 24, 2.4);
+      ctx.fillStyle = '#EA580C';
+      ctx.fillRect(-3, -4, 8, 5);
+      ctx.fillStyle = '#B45309';
+      ctx.fillRect(6, 0.8, 10, 3.2);
     } else {
       // 火箭筒（肩扛式）
       const flipY = facing === -1 && Math.cos(angle) < 0 ? -1 : 1;
@@ -929,7 +978,11 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     ctx.restore();
   }
 
-  private drawAimGuide(ctx: CanvasRenderingContext2D, f: StickFighter): void {
+  private drawAimGuide(
+    ctx: CanvasRenderingContext2D,
+    f: StickFighter,
+    rules: StickmanDuelRules
+  ): void {
     if (!f.weapon) return;
     const ox = f.x + f.aimX * 22;
     const oy = f.y - f.height * 0.62 + f.aimY * 18;
@@ -944,11 +997,35 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.moveTo(ox, oy);
       ctx.lineTo(ox + f.aimX * 135, oy + f.aimY * 135);
       ctx.stroke();
+    } else if (f.weapon.kind === 'shotgun') {
+      // 猎枪 30° 扇形散射区预览
+      const baseAngle = Math.atan2(f.aimY, f.aimX);
+      const halfSpread = ((rules.shotgunSpreadAngleDeg * Math.PI) / 180) * 0.5;
+      const coneLen = 118;
+
+      ctx.fillStyle = '#EA580C';
+      ctx.globalAlpha = 0.13;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.arc(ox, oy, coneLen, baseAngle - halfSpread, baseAngle + halfSpread);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#EA580C';
+      ctx.globalAlpha = 0.42;
+      ctx.lineWidth = 1.3;
+      ctx.setLineDash([4, 5]);
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox + Math.cos(baseAngle - halfSpread) * coneLen, oy + Math.sin(baseAngle - halfSpread) * coneLen);
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox + Math.cos(baseAngle + halfSpread) * coneLen, oy + Math.sin(baseAngle + halfSpread) * coneLen);
+      ctx.stroke();
     } else if (f.weapon.kind === 'rocket') {
       // 短抛物线落点虚点预览，直观体现火箭受重力下坠
       ctx.fillStyle = '#F97316';
-      const speed = 540;
-      const g = 560;
+      const speed = rules.rocketSpeed;
+      const g = rules.rocketGravity;
       for (let i = 1; i <= 7; i += 1) {
         const t = i * 0.055;
         const px = ox + f.aimX * speed * t;
@@ -981,6 +1058,20 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
         ctx.stroke();
 
         ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'shotgun') {
+        // 猎枪散射小弹丸：炽橙短拖尾 + 亮核小丸
+        ctx.strokeStyle = '#FB923C';
+        ctx.lineWidth = 2.4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(p.prevX - Math.cos(angle) * 10, p.prevY - Math.sin(angle) * 10);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#FFF7ED';
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         ctx.fill();

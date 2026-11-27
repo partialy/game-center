@@ -26,6 +26,7 @@ interface StickmanBotProfile {
 
 const WEAPON_RANK: Record<StickWeaponKind, number> = {
   rocket: 3.4,
+  shotgun: 3.0,
   sword: 2.8,
   pistol: 2.5,
 };
@@ -131,9 +132,15 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
     if (desiredPickup) {
       goalX = desiredPickup.x;
       goalY = desiredPickup.y;
-    } else if (self.weapon && (self.weapon.kind === 'pistol' || self.weapon.kind === 'rocket')) {
-      // 远程武器维持中距离拉扯，避免火箭贴脸自伤
-      const idealDist = self.weapon.kind === 'rocket' ? 240 : 190;
+    } else if (
+      self.weapon &&
+      (self.weapon.kind === 'pistol' ||
+        self.weapon.kind === 'shotgun' ||
+        self.weapon.kind === 'rocket')
+    ) {
+      // 远程武器维持合适交战距离：火箭远拉、手枪中距、猎枪近中距贴压
+      const idealDist =
+        self.weapon.kind === 'rocket' ? 240 : self.weapon.kind === 'shotgun' ? 140 : 190;
       if (distToEnemy < idealDist - 40) {
         goalX = self.x + (self.x >= target.x ? 140 : -140);
       } else if (distToEnemy > idealDist + 80) {
@@ -224,7 +231,12 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
     const horizDist = Math.abs(toEnemyX);
     const vertDist = Math.abs(toEnemyY);
 
-    if (self.weapon && (self.weapon.kind === 'pistol' || self.weapon.kind === 'rocket')) {
+    if (
+      self.weapon &&
+      (self.weapon.kind === 'pistol' ||
+        self.weapon.kind === 'shotgun' ||
+        self.weapon.kind === 'rocket')
+    ) {
       // 朝向敌人准备 8 向瞄准
       const aimDirX = toEnemyX >= 0 ? 1 : -1;
       const aimX = aimDirX;
@@ -245,6 +257,22 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
             aimY = 1;
           }
           if (this.hasReasonableLine(world, self, target, true)) {
+            wantsAttack = true;
+          }
+        }
+      } else if (self.weapon.kind === 'shotgun') {
+        // 猎枪 30° 扇形散射：近中距命中率极高，容许稍宽瞄准角
+        if (distToEnemy < 380) {
+          const angle = Math.atan2(toEnemyY, toEnemyX);
+          const snapped = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+          const err = Math.abs(Math.atan2(Math.sin(angle - snapped), Math.cos(angle - snapped)));
+          if (err < 0.34 && this.hasReasonableLine(world, self, target, false)) {
+            const sx = Math.round(Math.cos(snapped));
+            const sy = Math.round(Math.sin(snapped));
+            intent.moveLeft = sx < 0;
+            intent.moveRight = sx > 0;
+            intent.aimUp = sy < 0;
+            intent.aimDown = sy > 0;
             wantsAttack = true;
           }
         }

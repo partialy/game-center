@@ -60,6 +60,21 @@ const STICKMAN_ARMORY_ITEMS: StickmanArmoryItemDef[] = [
     summarize: (r) => `${r.pistolAmmo} 发 · ${r.pistolDamage} 伤害 · 弹速 ${r.pistolSpeed}`,
   },
   {
+    kind: 'shotgun',
+    name: '猎枪',
+    roleLabel: '扇形随机散射 · 近中距爆发',
+    enableKey: 'enableShotgun',
+    detailKeys: [
+      'shotgunAmmo',
+      'shotgunPellets',
+      'shotgunSpreadAngleDeg',
+      'shotgunDamage',
+      'shotgunSpeed',
+    ],
+    summarize: (r) =>
+      `${r.shotgunAmmo} 发 · ${r.shotgunPellets} 枚/发 · ${r.shotgunSpreadAngleDeg}° 扇形`,
+  },
+  {
     kind: 'rocket',
     name: '火箭筒',
     roleLabel: '抛物线爆破 · 炸毁地形',
@@ -105,6 +120,11 @@ const SHORT_FIELD_LABELS: Partial<Record<StickmanRuleKey, string>> = {
   pistolAmmo: '备弹数量',
   pistolDamage: '单发伤害',
   pistolSpeed: '子弹速度',
+  shotgunAmmo: '备弹数量',
+  shotgunPellets: '单发弹丸数',
+  shotgunSpreadAngleDeg: '扇形散射角',
+  shotgunDamage: '单枚伤害',
+  shotgunSpeed: '弹丸速度',
   rocketAmmo: '备弹数量',
   rocketDamage: '中心伤害',
   rocketBlastRadius: '爆炸半径',
@@ -337,7 +357,7 @@ export function StickmanItemsArmoryPanel({
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {STICKMAN_ARMORY_ITEMS.map((item) => {
             const enabled = Boolean(rules[item.enableKey]);
             const accent = STICKMAN_ITEM_ACCENTS[item.kind];

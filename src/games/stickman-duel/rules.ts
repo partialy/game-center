@@ -102,6 +102,7 @@ export function getDefaultStickmanRules(): StickmanDuelRules {
     maxDropsOnField: 4,
     enableSword: true,
     enablePistol: true,
+    enableShotgun: true,
     enableRocket: true,
     enableMedkit: true,
 
@@ -111,6 +112,11 @@ export function getDefaultStickmanRules(): StickmanDuelRules {
     pistolAmmo: 3,
     pistolDamage: 22,
     pistolSpeed: 880,
+    shotgunAmmo: 2,
+    shotgunPellets: 3,
+    shotgunSpreadAngleDeg: 30,
+    shotgunDamage: 12,
+    shotgunSpeed: 820,
     rocketAmmo: 1,
     rocketDamage: 45,
     rocketSpeed: 540,
@@ -206,6 +212,7 @@ export const STICKMAN_RULE_FIELDS: RuleFieldSchema[] = [
   { key: 'maxDropsOnField', group: 'drops', label: '同场掉落上限', type: 'integer', min: 1, max: 10, step: 1, unit: '个' },
   { key: 'enableSword', group: 'drops', label: '启用 长剑', type: 'boolean' },
   { key: 'enablePistol', group: 'drops', label: '启用 手枪', type: 'boolean' },
+  { key: 'enableShotgun', group: 'drops', label: '启用 猎枪', type: 'boolean' },
   { key: 'enableRocket', group: 'drops', label: '启用 火箭筒', type: 'boolean' },
   { key: 'enableMedkit', group: 'drops', label: '启用 血包', type: 'boolean' },
 
@@ -215,6 +222,11 @@ export const STICKMAN_RULE_FIELDS: RuleFieldSchema[] = [
   { key: 'pistolAmmo', group: 'items', label: '手枪备弹数', type: 'integer', min: 1, max: 12, step: 1, unit: '发' },
   { key: 'pistolDamage', group: 'items', label: '手枪单发伤害', type: 'integer', min: 8, max: 70, step: 1, unit: '伤' },
   { key: 'pistolSpeed', group: 'items', label: '手枪子弹速度', type: 'integer', min: 400, max: 1400, step: 40, unit: 'px/s' },
+  { key: 'shotgunAmmo', group: 'items', label: '猎枪备弹数', type: 'integer', min: 1, max: 8, step: 1, unit: '发' },
+  { key: 'shotgunPellets', group: 'items', label: '猎枪单发弹丸数', type: 'integer', min: 2, max: 8, step: 1, unit: '枚' },
+  { key: 'shotgunSpreadAngleDeg', group: 'items', label: '猎枪扇形散射角', type: 'integer', min: 5, max: 90, step: 5, unit: '°' },
+  { key: 'shotgunDamage', group: 'items', label: '猎枪单枚弹丸伤害', type: 'integer', min: 4, max: 40, step: 1, unit: '伤' },
+  { key: 'shotgunSpeed', group: 'items', label: '猎枪弹丸速度', type: 'integer', min: 400, max: 1300, step: 40, unit: 'px/s' },
   { key: 'rocketAmmo', group: 'items', label: '火箭筒备弹数', type: 'integer', min: 1, max: 5, step: 1, unit: '发' },
   { key: 'rocketDamage', group: 'items', label: '火箭爆炸中心伤害', type: 'integer', min: 15, max: 120, step: 5, unit: '伤' },
   { key: 'rocketBlastRadius', group: 'items', label: '火箭爆炸半径', type: 'integer', min: 60, max: 200, step: 6, unit: 'px' },
@@ -325,7 +337,13 @@ export function validateStickmanRules(rules: StickmanDuelRules): ValidationIssue
     });
   }
 
-  if (!rules.enableSword && !rules.enablePistol && !rules.enableRocket && !rules.enableMedkit) {
+  if (
+    !rules.enableSword &&
+    !rules.enablePistol &&
+    !rules.enableShotgun &&
+    !rules.enableRocket &&
+    !rules.enableMedkit
+  ) {
     issues.push({
       field: 'enableSword',
       severity: 'warning',

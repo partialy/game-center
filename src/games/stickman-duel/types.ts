@@ -15,18 +15,18 @@ export type StickmanMapTemplate =
   | 'sky_platforms'
   | 'fortress_bunkers';
 
-export type StickWeaponKind = 'sword' | 'pistol' | 'rocket';
+export type StickWeaponKind = 'sword' | 'pistol' | 'shotgun' | 'rocket';
 export type StickPickupKind = StickWeaponKind | 'medkit';
 export type StickmanDropSpawnMode = 'random' | 'center';
 
 export interface HeldWeaponState {
   kind: StickWeaponKind;
-  /** 剑=剩余耐久(默认5，命中敌人-1)；枪=剩余子弹(初始3)；火箭筒=剩余火箭(初始1) */
+  /** 剑=剩余耐久(默认5，命中敌人-1)；枪=剩余子弹(初始3)；猎枪=剩余子弹(初始2)；火箭筒=剩余火箭(初始1) */
   remaining: number;
   max: number;
 }
 
-export type FighterAttackKind = 'punch' | 'kick' | 'sword' | 'pistol' | 'rocket';
+export type FighterAttackKind = 'punch' | 'kick' | 'sword' | 'pistol' | 'shotgun' | 'rocket';
 
 export interface FighterAttackState {
   kind: FighterAttackKind;
@@ -81,6 +81,8 @@ export interface StickFighter {
   hitStunTimer: number;
   hitFlashTimer: number;
   invulnTimer: number;
+  /** 同一次散弹齐射 ID（允许同一发猎枪的 3 枚小弹同时命中，不与受伤无敌期冲突） */
+  lastHitVolleyId: number | null;
   swapCooldown: number;
   attackCooldown: number;
   comboStep: number;
@@ -118,7 +120,9 @@ export interface GroundPickup {
 
 export interface StickProjectile {
   id: number;
-  kind: 'pistol' | 'rocket';
+  kind: 'pistol' | 'shotgun' | 'rocket';
+  /** 猎枪单发齐射编号，用于同一发多枚弹丸的伤害结算 */
+  volleyId?: number;
   ownerSlotId: PlayerSlotId;
   colorHex: string;
   x: number;
@@ -230,6 +234,11 @@ export interface StickmanDuelRules extends Record<string, unknown> {
   pistolAmmo: number;
   pistolDamage: number;
   pistolSpeed: number;
+  shotgunAmmo: number;
+  shotgunPellets: number;
+  shotgunSpreadAngleDeg: number;
+  shotgunDamage: number;
+  shotgunSpeed: number;
   rocketAmmo: number;
   rocketDamage: number;
   rocketSpeed: number;
@@ -238,6 +247,7 @@ export interface StickmanDuelRules extends Record<string, unknown> {
   medkitHealPercent: number;
   enableSword: boolean;
   enablePistol: boolean;
+  enableShotgun: boolean;
   enableRocket: boolean;
   enableMedkit: boolean;
 }

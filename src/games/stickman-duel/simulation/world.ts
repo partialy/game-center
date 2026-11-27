@@ -103,6 +103,7 @@ function createFighter(
     hitStunTimer: 0,
     hitFlashTimer: 0,
     invulnTimer: 0,
+    lastHitVolleyId: null,
     swapCooldown: 0,
     attackCooldown: 0,
     comboStep: 0,
@@ -260,10 +261,11 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     this.spawnPickupByMode(kind, 32);
   }
 
-  private getEnabledWeaponKinds(): Array<'sword' | 'pistol' | 'rocket'> {
-    const out: Array<'sword' | 'pistol' | 'rocket'> = [];
+  private getEnabledWeaponKinds(): Array<'sword' | 'pistol' | 'shotgun' | 'rocket'> {
+    const out: Array<'sword' | 'pistol' | 'shotgun' | 'rocket'> = [];
     if (this.rules.enableSword) out.push('sword');
     if (this.rules.enablePistol) out.push('pistol');
+    if (this.rules.enableShotgun) out.push('shotgun');
     if (this.rules.enableRocket) out.push('rocket');
     return out;
   }
@@ -272,6 +274,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     const out: StickPickupKind[] = [];
     if (this.rules.enableSword) out.push('sword', 'sword');
     if (this.rules.enablePistol) out.push('pistol', 'pistol');
+    if (this.rules.enableShotgun) out.push('shotgun', 'shotgun');
     if (this.rules.enableRocket) out.push('rocket');
     if (this.rules.enableMedkit) out.push('medkit');
     return out;
@@ -488,6 +491,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     // 计时器更新
     f.hitFlashTimer = Math.max(0, f.hitFlashTimer - dt);
     f.invulnTimer = Math.max(0, f.invulnTimer - dt);
+    if (f.invulnTimer <= 0) {
+      f.lastHitVolleyId = null;
+    }
     f.swapCooldown = Math.max(0, f.swapCooldown - dt);
     f.attackCooldown = Math.max(0, f.attackCooldown - dt);
     f.dropThroughTimer = Math.max(0, f.dropThroughTimer - dt);
@@ -738,6 +744,19 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         comboStep: 0,
         projectileFired: false,
       };
+    } else if (kind === 'shotgun') {
+      f.attack = {
+        kind: 'shotgun',
+        elapsed: 0,
+        totalDuration: 0.34,
+        startup: 0.04,
+        activeEnd: 0.1,
+        aimX,
+        aimY,
+        hitSlotIds: [],
+        comboStep: 0,
+        projectileFired: false,
+      };
     } else if (kind === 'rocket') {
       f.attack = {
         kind: 'rocket',
@@ -764,7 +783,11 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     atk.elapsed += dt;
 
     // 远程武器在 startup 时刻发射
-    if ((atk.kind === 'pistol' || atk.kind === 'rocket') && !atk.projectileFired && atk.elapsed >= atk.startup) {
+    if (
+      (atk.kind === 'pistol' || atk.kind === 'shotgun' || atk.kind === 'rocket') &&
+      !atk.projectileFired &&
+      atk.elapsed >= atk.startup
+    ) {
       atk.projectileFired = true;
       this.fireRangedWeapon(f, atk.kind, atk.aimX, atk.aimY, sounds);
     }
@@ -802,7 +825,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
 
   private fireRangedWeapon(
     f: StickFighter,
-    kind: 'pistol' | 'rocket',
+    kind: 'pistol' | 'shotgun' | 'rocket',
     aimX: number,
     aimY: number,
     sounds: SoundEventKind[]
@@ -861,6 +884,61 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       this.spawnSparkBurst(muzzleX, muzzleY, nx, ny, 6, '#FDE047');
       this.addShake(3.2, -nx, -ny);
       sounds.push('stick_pistol');
+    } else if (kind === 'shotgun') {
+      const pellets = Math.max(1, Math.round(this.rules.shotgunPellets));
+      const spreadRad = (Math.max(0, this.rules.shotgunSpreadAngleDeg) * Math.PI) / 180;
+      const baseAngle = Math.atan2(ny, nx);
+      const speed = this.rules.shotgunSpeed;
+      const volleyId = this.nextEntityId++;
+
+      for (let p = 0; p < pellets; p += 1) {
+        const randomOffset = (this.rng.next() - 0.5) * spreadRad;
+        const pelletAngle = baseAngle + randomOffset;
+        const pvx = Math.cos(pelletAngle) * speed;
+        const pvy = Math.sin(pelletAngle) * speed;
+        this.world.projectiles.push({
+          id: this.nextEntityId++,
+          kind: 'shotgun',
+          volleyId,
+          ownerSlotId: f.slotId,
+          colorHex: f.config.colorHex,
+          x: muzzleX,
+          y: muzzleY,
+          prevX: muzzleX,
+          prevY: muzzleY,
+          vx: pvx,
+          vy: pvy,
+          radius: 3.4,
+          damage: this.rules.shotgunDamage,
+          knockback: 195,
+          gravityScale: 0, // 猎枪小弹丸直线高速散射
+          age: 0,
+          maxAge: 1.05,
+          blastRadius: 0,
+        });
+      }
+
+      // 猎枪中强后坐力 + 红色猎枪弹壳 + 宽扇口焰
+      f.vx -= nx * 135;
+      f.vy -= ny * 48;
+      this.world.particles.push({
+        x: f.x + nx * 8,
+        y: muzzleY - 2,
+        vx: -nx * 88 + (this.rng.next() - 0.5) * 45,
+        vy: -155 - this.rng.next() * 45,
+        size: 4.2,
+        color: '#EA580C',
+        alpha: 1,
+        age: 0,
+        maxAge: 0.52,
+        gravity: 660,
+        kind: 'shell',
+        rotation: 0,
+        vRot: 16,
+      });
+      this.spawnSparkBurst(muzzleX, muzzleY, nx, ny, 12, '#FB923C');
+      this.addShake(5.2, -nx, -ny);
+      sounds.push('fire_shotgun');
     } else {
       const speed = this.rules.rocketSpeed;
       this.world.projectiles.push({
@@ -984,12 +1062,21 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     stunSeconds: number,
     hitstopSeconds: number,
     shakePower: number,
-    sounds: SoundEventKind[]
+    sounds: SoundEventKind[],
+    volleyId?: number
   ): boolean {
-    if (!target.alive || target.invulnTimer > 0) return false;
+    const sameVolleyBypass =
+      volleyId !== undefined && target.lastHitVolleyId === volleyId;
+    if (!target.alive || (target.invulnTimer > 0 && !sameVolleyBypass)) return false;
     target.hp = Math.max(0, target.hp - damage);
-    target.vx = kbX;
-    target.vy = kbY;
+    if (sameVolleyBypass) {
+      // 同一次猎枪齐射的后续弹丸叠加部分击退，避免覆盖主击退方向
+      target.vx += kbX * 0.42;
+      target.vy = Math.min(target.vy, kbY);
+    } else {
+      target.vx = kbX;
+      target.vy = kbY;
+    }
     target.onGround = false;
     target.onPlatform = false;
     target.hitStunTimer = Math.max(target.hitStunTimer, stunSeconds);
@@ -997,6 +1084,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     const invulnDuration = Math.max(0, this.rules.hurtInvulnSeconds ?? 0.1);
     if (invulnDuration > 0) {
       target.invulnTimer = Math.max(target.invulnTimer, invulnDuration);
+      target.lastHitVolleyId = volleyId ?? null;
+    } else {
+      target.lastHitVolleyId = null;
     }
     target.attack = null;
 
@@ -1151,9 +1241,12 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
           break;
         }
 
-        // 2. 命中角色检测（无敌保护期间免疫子弹命中与击退）
+        // 2. 命中角色检测（无敌保护期间免疫子弹命中与击退；同一发猎枪齐射的弹丸可同时命中）
         for (const f of this.world.fighters) {
-          if (!f.alive || f.invulnTimer > 0) continue;
+          if (!f.alive) continue;
+          const sameVolleyBypass =
+            proj.volleyId !== undefined && f.lastHitVolleyId === proj.volleyId;
+          if (f.invulnTimer > 0 && !sameVolleyBypass) continue;
           if (f.slotId === proj.ownerSlotId && proj.age < 0.14) continue;
           const withinX = Math.abs(proj.x - f.x) <= f.halfWidth + proj.radius;
           const withinY = proj.y >= f.y - f.height - proj.radius && proj.y <= f.y + proj.radius;
@@ -1171,23 +1264,32 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
           this.detonateRocket(proj.x, proj.y, proj.ownerSlotId, proj.blastRadius, proj.damage, sounds);
         } else if (hitFighter) {
           const dirLen = Math.hypot(proj.vx, proj.vy) || 1;
+          const isShotgun = proj.kind === 'shotgun';
           const landed = this.dealDamage(
             proj.ownerSlotId,
             hitFighter,
             proj.damage,
             (proj.vx / dirLen) * proj.knockback,
-            Math.min(-150, (proj.vy / dirLen) * proj.knockback * 0.55 - 120),
-            0.22,
-            0.052,
-            5.8,
-            sounds
+            Math.min(isShotgun ? -115 : -150, (proj.vy / dirLen) * proj.knockback * 0.55 - (isShotgun ? 85 : 120)),
+            isShotgun ? 0.18 : 0.22,
+            isShotgun ? 0.042 : 0.052,
+            isShotgun ? 4.4 : 5.8,
+            sounds,
+            proj.volleyId
           );
           if (landed) {
             const ownerStats = this.world.stats[proj.ownerSlotId];
             if (ownerStats) ownerStats.hitsLanded += 1;
           }
         } else if (impacted) {
-          this.spawnSparkBurst(proj.x, proj.y, -Math.sign(proj.vx || 1), -0.4, 7, '#FDE047');
+          this.spawnSparkBurst(
+            proj.x,
+            proj.y,
+            -Math.sign(proj.vx || 1),
+            -0.4,
+            proj.kind === 'shotgun' ? 5 : 7,
+            proj.kind === 'shotgun' ? '#FB923C' : '#FDE047'
+          );
           sounds.push('bounce');
         }
         this.world.projectiles.splice(i, 1);

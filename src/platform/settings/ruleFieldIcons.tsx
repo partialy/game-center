@@ -204,6 +204,16 @@ function resolveFieldIconSpec(fieldKey: string): FieldIconSpec {
     case 'pistolDamage':
     case 'pistolSpeed':
       return { icon: <Crosshair className="w-3.5 h-3.5" aria-hidden="true" />, color: '#D97706' };
+    case 'enableShotgun':
+    case 'shotgunAmmo':
+      return { icon: <AmmoMagazineSvg />, color: '#EA580C' };
+    case 'shotgunPellets':
+    case 'shotgunSpreadAngleDeg':
+      return { icon: <GitFork className="w-3.5 h-3.5" aria-hidden="true" />, color: '#EA580C' };
+    case 'shotgunDamage':
+      return { icon: <Flame className="w-3.5 h-3.5" aria-hidden="true" />, color: '#EA580C' };
+    case 'shotgunSpeed':
+      return { icon: <BulletSpeedSvg />, color: '#EA580C' };
     case 'enableRocket':
     case 'rocketAmmo':
     case 'rocketDamage':

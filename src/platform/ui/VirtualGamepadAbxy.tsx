@@ -273,6 +273,8 @@ export function VirtualGamepadAbxy({
       ? '挥剑'
       : weaponKind === 'pistol'
       ? '开枪'
+      : weaponKind === 'shotgun'
+      ? '散射'
       : weaponKind === 'rocket'
       ? '发射'
       : '拳';
@@ -280,7 +282,7 @@ export function VirtualGamepadAbxy({
   const AttackIcon =
     weaponKind === 'sword'
       ? Sword
-      : weaponKind === 'pistol'
+      : weaponKind === 'pistol' || weaponKind === 'shotgun'
       ? Crosshair
       : weaponKind === 'rocket'
       ? Rocket

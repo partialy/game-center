@@ -17,6 +17,11 @@ export const STICKMAN_ITEM_ACCENTS: Record<StickPickupKind, StickmanItemAccent> 
     bg: 'rgba(245, 158, 11, 0.14)',
     border: '#F59E0B',
   },
+  shotgun: {
+    fg: '#EA580C',
+    bg: 'rgba(234, 88, 12, 0.14)',
+    border: '#F97316',
+  },
   rocket: {
     fg: '#DC2626',
     bg: 'rgba(239, 68, 68, 0.14)',
@@ -115,6 +120,56 @@ export function StickmanItemIcon({
         {/* 握把防滑纹 */}
         <line x1="12.5" y1="28" x2="16.5" y2="28" stroke="#94A3B8" strokeWidth="1.5" strokeLinecap="round" />
         <line x1="11.8" y1="32" x2="15.8" y2="32" stroke="#94A3B8" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === 'shotgun') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+        <g transform="rotate(-18 24 24)">
+          {/* 30° 扇形散射示意光晕与三枚小弹丸 */}
+          <path d="M35 20 L46 14 L46 26 Z" fill="#F97316" opacity="0.22" />
+          <circle cx="43.5" cy="16.2" r="1.9" fill="#EA580C" />
+          <circle cx="45" cy="20" r="1.9" fill="#F97316" />
+          <circle cx="43.5" cy="23.8" r="1.9" fill="#EA580C" />
+          {/* 胡桃木枪托 */}
+          <path
+            d="M4 22 L15 19 L16 26 L5 31 Z"
+            fill="#9A3412"
+            stroke="#431407"
+            strokeWidth="1.4"
+            strokeLinejoin="round"
+          />
+          {/* 双管金属枪管 */}
+          <rect x="14" y="16.5" width="23" height="4.4" rx="1.4" fill="#1E293B" />
+          <rect x="17" y="20.4" width="20" height="3" rx="1" fill="#475569" />
+          {/* 橙铜机匣 */}
+          <rect
+            x="14"
+            y="17"
+            width="8.5"
+            height="7"
+            rx="1.5"
+            fill="#EA580C"
+            stroke="#7C2D12"
+            strokeWidth="1.2"
+          />
+          {/* 木质泵动护木 */}
+          <rect
+            x="23.5"
+            y="22.5"
+            width="10"
+            height="4.4"
+            rx="1.5"
+            fill="#B45309"
+            stroke="#431407"
+            strokeWidth="1.2"
+          />
+          <line x1="26" y1="23.5" x2="26" y2="26" stroke="#FDE68A" strokeWidth="1" opacity="0.65" />
+          <line x1="29" y1="23.5" x2="29" y2="26" stroke="#FDE68A" strokeWidth="1" opacity="0.65" />
+          <line x1="32" y1="23.5" x2="32" y2="26" stroke="#FDE68A" strokeWidth="1" opacity="0.65" />
+        </g>
       </svg>
     );
   }
