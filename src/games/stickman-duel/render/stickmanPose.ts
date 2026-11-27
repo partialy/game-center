@@ -59,6 +59,10 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
+function lerpVec(a: Vec2, b: Vec2, t: number): Vec2 {
+  return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) };
+}
+
 function lerpAngle(a: number, b: number, t: number): number {
   let diff = b - a;
   while (diff > Math.PI) diff -= Math.PI * 2;
@@ -147,6 +151,14 @@ export function computeTargetStickmanPose(
   const absVx = Math.abs(f.vx);
   const speedRatio = clamp(absVx / Math.max(120, maxMoveSpeed), 0, 1);
   const sprintBlend = smoothstep(0.45, 0.88, speedRatio);
+  const isAirborne = !f.onGround;
+  const isWalking = f.onGround && speedRatio > 0.08;
+  const isJumping = isAirborne && f.vy < -60;
+  const isFalling = isAirborne && f.vy > 80;
+  const gaitBlend = isWalking ? smoothstep(0.08, 0.30, speedRatio) : 0;
+  const riseBlend = isJumping ? smoothstep(-60, -420, f.vy) : 0;
+  const fallBlend = isFalling ? smoothstep(80, 440, f.vy) : 0;
+  const apexBlend = 1 - riseBlend - fallBlend;
 
   // 确定当前核心动作态，便于外部查询与差异化插值
   const attack = f.attack;
@@ -163,14 +175,12 @@ export function computeTargetStickmanPose(
   else if (f.hitStunTimer > 0) locomotion = 'hitstun';
   else if (attack) locomotion = 'attack';
   else if (isTuckFlip) locomotion = 'double_jump_tuck';
-  else if (!f.onGround) {
-    if (f.vy < -230) locomotion = 'jump_rise';
-    else if (f.vy <= 150) locomotion = 'air_apex';
-    else locomotion = 'air_fall';
-  } else if (isLanding && speedRatio < 0.55) locomotion = 'landing';
+  else if (isJumping) locomotion = 'jump_rise';
+  else if (isFalling) locomotion = 'air_fall';
+  else if (isAirborne) locomotion = 'air_apex';
+  else if (isLanding && speedRatio < 0.55) locomotion = 'landing';
   else if (isSkidding) locomotion = 'skid';
-  else if (speedRatio >= 0.55) locomotion = 'sprint';
-  else if (speedRatio > 0.08) locomotion = 'walk';
+  else if (isWalking) locomotion = speedRatio >= 0.55 ? 'sprint' : 'walk';
 
   // 格斗戒备呼吸节奏（带微弱相位差，场上每个火柴人律动自然错开）
   const idleWave = Math.sin(elapsedVisual * 5.6 + f.x * 0.02);
@@ -219,12 +229,10 @@ export function computeTargetStickmanPose(
     headTilt = dir * 0.38;
   } else if (!f.onGround) {
     // 空中三阶段姿态平滑过渡：起跳冲升 -> 顶点悬浮 -> 高速下坠
-    const riseBlend = smoothstep(-80, -420, f.vy);
-    const fallBlend = smoothstep(80, 440, f.vy);
     const airHorizLean = clamp(f.vx / 320, -1, 1) * 0.24;
     hipY = -21.5 + fallBlend * 1.2 - riseBlend * 1.5;
     lean =
-      dir * (0.2 * riseBlend + 0.16 * (1 - riseBlend - fallBlend) - 0.1 * fallBlend) +
+      dir * (0.2 * riseBlend + 0.16 * apexBlend - 0.1 * fallBlend) +
       airHorizLean;
     spineArch = dir * (2.6 * (1 - fallBlend) - 2.4 * fallBlend);
     headTilt = -0.18 * riseBlend + 0.22 * fallBlend;
@@ -235,21 +243,20 @@ export function computeTargetStickmanPose(
     lean = -dir * 0.32;
     spineArch = -dir * 2.2;
     headTilt = dir * 0.12;
-  } else if (speedRatio > 0.08) {
-    // 慢走 ↔ 疾跑双倍频重心起伏 + 前倾角渐变
+  } else {
+    // 随实际地速在待机、慢走与疾跑之间混合重心和前倾。
     const doubleStepBounce = Math.abs(Math.sin(f.runPhase));
     const walkBob = doubleStepBounce * 2.1;
     const sprintBob = doubleStepBounce * 3.4;
-    hipY = -20.5 + lerp(walkBob, sprintBob, sprintBlend) - sprintBlend * 1.4;
-    lean = dir * lerp(0.14, 0.46, sprintBlend);
-    spineArch = dir * lerp(1.0, 3.6, sprintBlend);
-    headTilt = dir * lerp(0.03, -0.08, sprintBlend);
-  } else {
-    // 格斗戒备呼吸：膝盖微弹性上下起伏，重心轻摇
-    hipX = Math.sin(elapsedVisual * 2.8 + f.x * 0.02) * 1.1;
-    hipY = -20 + idleWave * 1.35 + idlePulse * 0.25;
-    lean = dir * (0.12 + idleWave * 0.045);
-    spineArch = dir * (1.5 + idleWave * 0.4);
+    hipX = Math.sin(elapsedVisual * 2.8 + f.x * 0.02) * 1.1 * (1 - gaitBlend);
+    hipY = lerp(
+      -20 + idleWave * 1.35 + idlePulse * 0.25,
+      -20.5 + lerp(walkBob, sprintBob, sprintBlend) - sprintBlend * 1.4,
+      gaitBlend
+    );
+    lean = dir * lerp(0.12 + idleWave * 0.045, lerp(0.14, 0.46, sprintBlend), gaitBlend);
+    spineArch = dir * lerp(1.5 + idleWave * 0.4, lerp(1.0, 3.6, sprintBlend), gaitBlend);
+    headTilt = dir * lerp(0.03, -0.08, sprintBlend) * gaitBlend;
   }
 
   // 叠加落地深蹲缓冲（允许在落地移动起步时也顺滑过渡）
@@ -371,10 +378,6 @@ export function computeTargetStickmanPose(
     frontFootTarget = { x: hip.x + dir * 5, y: hip.y + 8 };
   } else if (!f.onGround) {
     // 空中三态腿姿平滑融合
-    const riseT = smoothstep(-60, -420, f.vy);
-    const fallT = smoothstep(80, 440, f.vy);
-    const apexT = Math.max(0, 1 - riseT - fallT);
-
     // 起跳：前膝高抬、后腿潇洒斜后伸展
     const riseFront: Vec2 = { x: hip.x + dir * 8, y: hip.y + 10 };
     const riseBack: Vec2 = { x: hip.x - dir * 12, y: hip.y + 22 };
@@ -386,18 +389,18 @@ export function computeTargetStickmanPose(
     const fallBack: Vec2 = { x: hip.x - dir * 9, y: hip.y + 19 };
 
     frontFootTarget = {
-      x: riseFront.x * riseT + apexFront.x * apexT + fallFront.x * fallT,
-      y: riseFront.y * riseT + apexFront.y * apexT + fallFront.y * fallT,
+      x: riseFront.x * riseBlend + apexFront.x * apexBlend + fallFront.x * fallBlend,
+      y: riseFront.y * riseBlend + apexFront.y * apexBlend + fallFront.y * fallBlend,
     };
     backFootTarget = {
-      x: riseBack.x * riseT + apexBack.x * apexT + fallBack.x * fallT,
-      y: riseBack.y * riseT + apexBack.y * apexT + fallBack.y * fallT,
+      x: riseBack.x * riseBlend + apexBack.x * apexBlend + fallBack.x * fallBlend,
+      y: riseBack.y * riseBlend + apexBack.y * apexBlend + fallBack.y * fallBlend,
     };
   } else if (isSkidding) {
     // 急停刹步：前脚斜前蹬地刹车，后脚屈膝压低
     frontFootTarget = { x: hip.x + dir * 15, y: 0 };
     backFootTarget = { x: hip.x - dir * 11, y: 0 };
-  } else if (speedRatio > 0.08) {
+  } else {
     // 椭圆轨迹步态：慢走步幅温和、贴地柔和；疾跑步幅拉满、抬脚更高更有弹性
     const strideX = lerp(9.5, 17.5, sprintBlend) * (0.45 + 0.55 * speedRatio);
     const liftY = lerp(4.2, 11.5, sprintBlend);
@@ -409,19 +412,17 @@ export function computeTargetStickmanPose(
     const swingB = Math.sin(phaseB);
     const liftB = Math.max(0, Math.cos(phaseB));
 
-    frontFootTarget = {
-      x: hip.x + swingF * strideX * dir + dir * 1.5,
-      y: -liftF * liftY,
-    };
-    backFootTarget = {
-      x: hip.x + swingB * strideX * dir - dir * 1.5,
-      y: -liftB * liftY,
-    };
-  } else {
-    // 格斗戒备分脚站姿（落地深蹲时双脚略外张增加下盘稳重感）
     const crouchSpread = isLanding ? f.landingStrength * 3.5 : 0;
-    backFootTarget = { x: hip.x - dir * (9.5 + crouchSpread), y: 0 };
-    frontFootTarget = { x: hip.x + dir * (10.5 + crouchSpread), y: 0 };
+    frontFootTarget = lerpVec(
+      { x: hip.x + dir * (10.5 + crouchSpread), y: 0 },
+      { x: hip.x + (swingF * strideX + 1.5) * dir, y: -liftF * liftY },
+      gaitBlend
+    );
+    backFootTarget = lerpVec(
+      { x: hip.x - dir * (9.5 + crouchSpread), y: 0 },
+      { x: hip.x + (swingB * strideX - 1.5) * dir, y: -liftB * liftY },
+      gaitBlend
+    );
   }
 
   // 飞踢极限伸展时直接允许前脚超出自然步长，保留凌厉踢击剪影
@@ -462,7 +463,7 @@ export function computeTargetStickmanPose(
     const recoilPush = attack && atkRatio < 0.35 ? -Math.sin((atkRatio / 0.35) * Math.PI) * 5.5 : 0;
     const ux = Math.cos(weaponAngle);
     const uy = Math.sin(weaponAngle);
-    const runBobY = f.onGround && speedRatio > 0.1 ? Math.sin(f.runPhase * 2) * 1.4 : idleWave * 0.6;
+    const runBobY = lerp(idleWave * 0.6, Math.sin(f.runPhase * 2) * 1.4, gaitBlend);
 
     if (f.weapon.kind === 'grenade') {
       // 手雷投掷前蓄力拉臂 -> 甩手抛出
@@ -548,18 +549,22 @@ export function computeTargetStickmanPose(
       frontHandTarget = { x: shoulder.x + dir * 9, y: shoulder.y + 5 };
       backHandTarget = { x: shoulder.x - dir * 4, y: shoulder.y + 8 };
     } else if (!f.onGround) {
-      weaponAngle = dir === 1 ? (f.vy < 0 ? -0.95 : -0.35) : Math.PI + (f.vy < 0 ? 0.95 : 0.35);
-      frontHandTarget = { x: shoulder.x + dir * 14, y: shoulder.y + (f.vy < 0 ? -3 : 4) };
-      backHandTarget = { x: shoulder.x - dir * 12, y: shoulder.y - (f.vy > 140 ? 7 : 1) };
-    } else if (speedRatio > 0.35) {
-      // 疾跑拖剑/斜持剑，气势十足
-      weaponAngle = dir === 1 ? 0.42 + Math.sin(f.runPhase) * 0.14 : Math.PI - 0.42 - Math.sin(f.runPhase) * 0.14;
-      frontHandTarget = { x: shoulder.x - dir * 7, y: shoulder.y + 10 };
-      backHandTarget = { x: shoulder.x + dir * 13, y: shoulder.y + 5 };
+      weaponAngle += dir * lerp(-0.35, -0.95, riseBlend);
+      frontHandTarget = { x: shoulder.x + dir * 14, y: shoulder.y + lerp(4, -3, riseBlend) };
+      backHandTarget = { x: shoulder.x - dir * 12, y: shoulder.y - lerp(1, 7, fallBlend) };
     } else {
-      weaponAngle = dir === 1 ? -0.55 + idleWave * 0.06 : Math.PI + 0.55 - idleWave * 0.06;
-      frontHandTarget = { x: shoulder.x + dir * 14, y: shoulder.y + 4 + idleWave * 0.9 };
-      backHandTarget = { x: shoulder.x + dir * 6, y: shoulder.y + 8 + idleWave * 0.7 };
+      const carryBlend = smoothstep(0.25, 0.60, speedRatio);
+      weaponAngle += dir * lerp(-0.55 + idleWave * 0.06, 0.42 + Math.sin(f.runPhase) * 0.14, carryBlend);
+      frontHandTarget = lerpVec(
+        { x: shoulder.x + dir * 14, y: shoulder.y + 4 + idleWave * 0.9 },
+        { x: shoulder.x - dir * 7, y: shoulder.y + 10 },
+        carryBlend
+      );
+      backHandTarget = lerpVec(
+        { x: shoulder.x + dir * 6, y: shoulder.y + 8 + idleWave * 0.7 },
+        { x: shoulder.x + dir * 13, y: shoulder.y + 5 },
+        carryBlend
+      );
     }
   } else if (isTuckFlip) {
     // 二段跳双臂抱膝团身
@@ -567,10 +572,6 @@ export function computeTargetStickmanPose(
     backHandTarget = { x: shoulder.x + dir * 4, y: shoulder.y + 12 };
   } else if (!f.onGround) {
     // 空中空手三阶段手臂：起跳上冲 -> 顶点展开平衡 -> 下坠迎风高举
-    const riseT = smoothstep(-60, -420, f.vy);
-    const fallT = smoothstep(80, 440, f.vy);
-    const apexT = Math.max(0, 1 - riseT - fallT);
-
     const riseF: Vec2 = { x: shoulder.x + dir * 12, y: shoulder.y - 10 };
     const riseB: Vec2 = { x: shoulder.x - dir * 13, y: shoulder.y + 6 };
     const apexF: Vec2 = { x: shoulder.x + dir * 15, y: shoulder.y - 2 };
@@ -579,47 +580,41 @@ export function computeTargetStickmanPose(
     const fallB: Vec2 = { x: shoulder.x - dir * 13, y: shoulder.y - 12 };
 
     frontHandTarget = {
-      x: riseF.x * riseT + apexF.x * apexT + fallF.x * fallT,
-      y: riseF.y * riseT + apexF.y * apexT + fallF.y * fallT,
+      x: riseF.x * riseBlend + apexF.x * apexBlend + fallF.x * fallBlend,
+      y: riseF.y * riseBlend + apexF.y * apexBlend + fallF.y * fallBlend,
     };
     backHandTarget = {
-      x: riseB.x * riseT + apexB.x * apexT + fallB.x * fallT,
-      y: riseB.y * riseT + apexB.y * apexT + fallB.y * fallT,
+      x: riseB.x * riseBlend + apexB.x * apexBlend + fallB.x * fallBlend,
+      y: riseB.y * riseBlend + apexB.y * apexBlend + fallB.y * fallBlend,
     };
   } else if (isSkidding) {
     // 急停双臂向外展开保持平衡
     frontHandTarget = { x: shoulder.x + dir * 14, y: shoulder.y + 2 };
     backHandTarget = { x: shoulder.x - dir * 15, y: shoulder.y - 3 };
-  } else if (speedRatio > 0.08) {
+  } else {
     // 与步态反向协调摆臂（左脚前则右手前），疾跑时摆臂更有力
     const armSwing = Math.sin(f.runPhase + Math.PI);
     const ampX = lerp(9, 15.5, sprintBlend);
     const liftFront = Math.max(0, armSwing) * lerp(3, 7, sprintBlend);
     const liftBack = Math.max(0, -armSwing) * lerp(3, 7, sprintBlend);
 
-    frontHandTarget = {
-      x: shoulder.x + armSwing * ampX * dir + dir * 2,
-      y: shoulder.y + 9 - liftFront,
-    };
-    backHandTarget = {
-      x: shoulder.x - armSwing * ampX * dir - dir * 1,
-      y: shoulder.y + 9 - liftBack,
-    };
-  } else if (isLanding) {
-    // 落地深蹲双臂顺势下摆稳住重心
-    const crouch = f.landingStrength;
-    frontHandTarget = { x: shoulder.x + dir * (13 + crouch * 4), y: shoulder.y + 6 + crouch * 4 };
-    backHandTarget = { x: shoulder.x - dir * (11 + crouch * 4), y: shoulder.y + 5 + crouch * 3 };
-  } else {
-    // 格斗戒备双拳护颌律动
-    frontHandTarget = {
-      x: shoulder.x + dir * (13.5 + idleWave * 1.1),
-      y: shoulder.y + 1.5 - idleWave * 1.4,
-    };
-    backHandTarget = {
-      x: shoulder.x + dir * (4.5 - idleWave * 0.9),
-      y: shoulder.y + 5 + idleWave * 1.1,
-    };
+    const crouch = isLanding ? f.landingStrength : 0;
+    const stanceFront = isLanding
+      ? { x: shoulder.x + dir * (13 + crouch * 4), y: shoulder.y + 6 + crouch * 4 }
+      : { x: shoulder.x + dir * (13.5 + idleWave * 1.1), y: shoulder.y + 1.5 - idleWave * 1.4 };
+    const stanceBack = isLanding
+      ? { x: shoulder.x - dir * (11 + crouch * 4), y: shoulder.y + 5 + crouch * 3 }
+      : { x: shoulder.x + dir * (4.5 - idleWave * 0.9), y: shoulder.y + 5 + idleWave * 1.1 };
+    frontHandTarget = lerpVec(
+      stanceFront,
+      { x: shoulder.x + (armSwing * ampX + 2) * dir, y: shoulder.y + 9 - liftFront },
+      gaitBlend
+    );
+    backHandTarget = lerpVec(
+      stanceBack,
+      { x: shoulder.x - (armSwing * ampX + 1) * dir, y: shoulder.y + 9 - liftBack },
+      gaitBlend
+    );
   }
 
   // 出拳极限帧允许略微前送突出打击延展感，其余姿态严格走 2-Bone IK 保持臂长
@@ -689,26 +684,21 @@ export function blendStickmanPose(
   const rate = isSnappy ? 30 : target.locomotion === 'jump_rise' ? 24 : 17;
   const t = 1 - Math.exp(-rate * Math.min(0.05, dtSeconds));
 
-  const mixVec = (a: Vec2, b: Vec2): Vec2 => ({
-    x: lerp(a.x, b.x, t),
-    y: lerp(a.y, b.y, t),
-  });
-
   return {
     locomotion: target.locomotion,
-    hip: mixVec(prev.hip, target.hip),
-    spineMid: mixVec(prev.spineMid, target.spineMid),
-    shoulder: mixVec(prev.shoulder, target.shoulder),
-    head: mixVec(prev.head, target.head),
+    hip: lerpVec(prev.hip, target.hip, t),
+    spineMid: lerpVec(prev.spineMid, target.spineMid, t),
+    shoulder: lerpVec(prev.shoulder, target.shoulder, t),
+    head: lerpVec(prev.head, target.head, t),
     headTilt: lerp(prev.headTilt, target.headTilt, t),
-    backKnee: mixVec(prev.backKnee, target.backKnee),
-    backFoot: mixVec(prev.backFoot, target.backFoot),
-    frontKnee: mixVec(prev.frontKnee, target.frontKnee),
-    frontFoot: mixVec(prev.frontFoot, target.frontFoot),
-    backElbow: mixVec(prev.backElbow, target.backElbow),
-    backHand: mixVec(prev.backHand, target.backHand),
-    frontElbow: mixVec(prev.frontElbow, target.frontElbow),
-    frontHand: mixVec(prev.frontHand, target.frontHand),
+    backKnee: lerpVec(prev.backKnee, target.backKnee, t),
+    backFoot: lerpVec(prev.backFoot, target.backFoot, t),
+    frontKnee: lerpVec(prev.frontKnee, target.frontKnee, t),
+    frontFoot: lerpVec(prev.frontFoot, target.frontFoot, t),
+    backElbow: lerpVec(prev.backElbow, target.backElbow, t),
+    backHand: lerpVec(prev.backHand, target.backHand, t),
+    frontElbow: lerpVec(prev.frontElbow, target.frontElbow, t),
+    frontHand: lerpVec(prev.frontHand, target.frontHand, t),
     poseScaleX: lerp(prev.poseScaleX, target.poseScaleX, t),
     poseScaleY: lerp(prev.poseScaleY, target.poseScaleY, t),
     weaponAngle: lerpAngle(prev.weaponAngle, target.weaponAngle, t),

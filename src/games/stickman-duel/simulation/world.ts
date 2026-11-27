@@ -65,6 +65,10 @@ import {
 
 const FIGHTER_HALF_WIDTH = 13;
 const FIGHTER_HEIGHT = 54;
+const GROUND_MOVE_RESPONSE = 19;
+const GROUND_BRAKE_RESPONSE = 23;
+const GROUND_TURN_RESPONSE = 13;
+const AIR_MOVE_RESPONSE = 11;
 const COYOTE_TIME_SECONDS = 0.085;
 const JUMP_BUFFER_SECONDS = 0.095;
 const DROP_THROUGH_SECONDS = 0.19;
@@ -1053,42 +1057,34 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     f.aimX = aim.x;
     f.aimY = aim.y;
 
-    // 2. 水平速度控制（含猎枪后坐力滑移窗口，确保后退位移清晰可感）
+    // 2. 水平速度向当前按键或摇杆的目标速度插值，独立处理后坐力与受击。
     if (!inHitStun) {
       const hasMoveInput = Math.abs(dirX) > 0.14;
       const targetVx = hasMoveInput
         ? Math.sign(dirX) * Math.min(1, Math.abs(dirX) * 1.15) * this.rules.moveSpeed
         : 0;
-      if (f.recoilTimer > 0 && !hasMoveInput) {
-        f.vx *= Math.pow(0.06, dt);
-      } else {
-        const accel = f.recoilTimer > 0 ? 540 : f.onGround ? 2400 : 1450;
-        const maxDelta = accel * dt;
-        const diff = targetVx - f.vx;
-        if (Math.abs(diff) <= maxDelta) {
-          f.vx = targetVx;
+      const deltaVx = targetVx - f.vx;
+      if (f.recoilTimer > 0) {
+        if (hasMoveInput) {
+          f.vx += Math.sign(deltaVx) * Math.min(Math.abs(deltaVx), 540 * dt);
         } else {
-          f.vx += Math.sign(diff) * maxDelta;
+          f.vx *= Math.pow(0.06, dt);
         }
-      }
-      // 急转刹步检测：在地面高速反向输入时触发后仰刹步姿态与脚底轻尘
-      const reversingOnGround =
-        f.onGround &&
-        hasMoveInput &&
-        f.recoilTimer <= 0 &&
-        Math.abs(f.vx) > 130 &&
-        Math.sign(dirX) !== Math.sign(f.vx);
-      if (reversingOnGround) {
-        if (f.skidTimer <= 0.02) {
-          this.spawnDustBurst(f.x, f.y, 3, '#CBD5E1');
+      } else {
+        const reversing = f.onGround && f.vx * targetVx < 0;
+        if (reversing && Math.abs(f.vx) > 130) {
+          if (f.skidTimer <= 0.02) {
+            this.spawnDustBurst(f.x, f.y, 3, '#CBD5E1');
+          }
+          f.skidTimer = 0.14;
         }
-        f.skidTimer = 0.14;
-      }
-      if (f.onGround && Math.abs(f.vx) > 14 && f.recoilTimer <= 0) {
-        // 慢走步频更舒展、疾跑步频更紧凑
-        const speedNorm = Math.min(1, Math.abs(f.vx) / Math.max(120, this.rules.moveSpeed));
-        const strideRate = 0.044 + speedNorm * 0.016;
-        f.runPhase += Math.abs(f.vx) * dt * strideRate;
+        const response = !f.onGround ? AIR_MOVE_RESPONSE
+          : reversing ? GROUND_TURN_RESPONSE
+          : hasMoveInput ? GROUND_MOVE_RESPONSE
+          : GROUND_BRAKE_RESPONSE;
+        // 时间步决定 lerp 权重，松键时收掉低于 1 px/s 的残余滑动。
+        f.vx += deltaVx * -Math.expm1(-response * dt);
+        if (Math.abs(targetVx - f.vx) < 1) f.vx = targetVx;
       }
     } else {
       f.vx *= Math.pow(0.18, dt);
@@ -1165,6 +1161,12 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     const prevVy = f.vy;
     f.vy += this.rules.gravity * dt;
     moveBodyWithTerrain(this.world.terrain, f, dt, f.dropThroughTimer > 0, 0);
+    if (!inHitStun && f.onGround && f.recoilTimer <= 0) {
+      // 碰撞后用实际速度推进步态，贴墙或起跳时停止推进。
+      const speed = Math.abs(f.vx);
+      const speedNorm = Math.min(1, speed / this.rules.moveSpeed);
+      f.runPhase += speed * dt * (0.044 + speedNorm * 0.016);
+    }
     if (!wasOnGround && f.onGround && prevVy > 110) {
       const strength = Math.min(1, Math.max(0.28, (prevVy - 100) / 560));
       f.landingStrength = strength;

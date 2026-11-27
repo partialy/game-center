@@ -21,6 +21,7 @@ import {
   computeTargetStickmanPose,
   type StickmanPose,
 } from './stickmanPose';
+import { drawStickmanSprite, HELD_SPRITE_BOXES, preloadStickmanSprites } from './stickmanSprites';
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
@@ -121,6 +122,10 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
   private elapsedVisual = 0;
   private readonly poseCache = new Map<string, StickmanPose>();
   private lastRoundNumber = -1;
+
+  constructor() {
+    preloadStickmanSprites();
+  }
 
   resize(cssWidth: number, cssHeight: number, dpr: number): void {
     this.cssWidth = Math.max(1, cssWidth);
@@ -564,6 +569,14 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
+    if (drop.kind === 'sword') ctx.rotate(-Math.PI * 0.25);
+    const spriteDrawn = drawStickmanSprite(ctx, drop.kind, 0, -1, 27, 20);
+    if (drop.kind === 'sword') ctx.rotate(Math.PI * 0.25);
+    if (spriteDrawn) {
+      ctx.restore();
+      return;
+    }
+
     if (drop.kind === 'sword') {
       ctx.rotate(-Math.PI * 0.25);
       // 剑身
@@ -937,6 +950,20 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     ctx.translate(handX, handY);
     ctx.rotate(angle);
 
+    ctx.save();
+    if (
+      Math.cos(angle) < 0 &&
+      (kind === 'pistol' || kind === 'shotgun' || (kind === 'rocket' && facing === -1))
+    ) {
+      ctx.scale(1, -1);
+    }
+    const spriteDrawn = drawStickmanSprite(ctx, kind, ...HELD_SPRITE_BOXES[kind]);
+    ctx.restore();
+    if (spriteDrawn) {
+      ctx.restore();
+      return;
+    }
+
     if (kind === 'sword') {
       // 长剑：亮银青光刃 + 金色护手（保留角色无敌闪烁时的透明度继承）
       const baseAlpha = ctx.globalAlpha;
@@ -1203,6 +1230,10 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
         // 抛物线翻滚飞行中的碎片手雷
         ctx.translate(p.x, p.y);
         ctx.rotate(p.age * 11 * (p.vx >= 0 ? 1 : -1));
+        if (drawStickmanSprite(ctx, 'grenadeFlight', 0, 0, p.radius * 2.2, p.radius * 2.4)) {
+          ctx.restore();
+          continue;
+        }
         ctx.fillStyle = '#365314';
         ctx.beginPath();
         ctx.ellipse(0, 0, 5.8, 6.8, 0, 0, Math.PI * 2);
@@ -1236,6 +1267,10 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
         ctx.closePath();
         ctx.fill();
 
+        if (drawStickmanSprite(ctx, 'rocketProjectile', 2.5, 0, 21, 10)) {
+          ctx.restore();
+          continue;
+        }
         ctx.fillStyle = '#334155';
         ctx.fillRect(-8, -3.6, 13, 7.2);
         ctx.fillStyle = '#EF4444';

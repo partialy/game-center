@@ -6,6 +6,10 @@
 
 大厅页头和浏览器标签使用 [圆形 ICO](src/assets/ai-game-certer-icon_round.ico)。《坦克大战》战场精灵贴图位于 `src/assets/tank-battle/`（`256×256` RGBA WebP），由 `src/games/tank-battle/render/tankSprites.ts` 负责异步解码、按玩家涂装离线染色缓存并与碰撞箱等比对齐。
 
+《星渊火柴人决斗》的透明 PNG 位于 `src/assets/stickman-duel/`。`src/games/stickman-duel/render/stickmanSprites.ts` 集中维护 6 种道具和 2 种飞行物的素材，战场、军械库和训练台共用道具图。Canvas 按持武手或飞行物位置定位贴图，并绘制弹道、尾焰及其他动态特效。
+
+火柴人移动由 `src/games/stickman-duel/simulation/world.ts` 按固定时间步插值水平速度，使用碰撞后的地面速度推进步态。`src/games/stickman-duel/render/stickmanPose.ts` 根据地面接触与速度生成并混合待机、走跑、起跳、滞空、下落和落地的 IK 姿态帧。
+
 ## 按任务查阅
 
 - 设计大厅、赛前设置、玩家资料、按键、游戏接入或持久化时，先读[多游戏平台架构与开发计划](docs/platform-architecture-plan.md)。平台计划也定义了目录结构和编码规范。

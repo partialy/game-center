@@ -1493,9 +1493,21 @@ test('火柴人 2-Bone IK 骨骼与多姿态动作库：步行/疾跑/急转刹�
   assert.equal(idleA.locomotion, 'idle');
   assert.ok(Math.abs(idleA.hip.y - idleB.hip.y) > 0.2, '待机姿态应有自然的格斗呼吸重心起伏');
 
+  // 跨过步行动画阈值时脚掌仍应连续移动。
+  f.runPhase = 0.9;
+  f.vx = 20;
+  const slowIdlePose = computeTargetStickmanPose(f, 0.5, 260);
+  f.vx = 21;
+  const startWalkPose = computeTargetStickmanPose(f, 0.5, 260);
+  assert.equal(slowIdlePose.locomotion, 'idle');
+  assert.equal(startWalkPose.locomotion, 'walk');
+  assert.ok(Math.hypot(
+    startWalkPose.frontFoot.x - slowIdlePose.frontFoot.x,
+    startWalkPose.frontFoot.y - slowIdlePose.frontFoot.y
+  ) < 0.1);
+
   // 慢走 vs 疾跑
   f.vx = 85;
-  f.runPhase = 0.9;
   const walkPose = computeTargetStickmanPose(f, 0.5, 260);
   assert.equal(walkPose.locomotion, 'walk');
 
@@ -1603,16 +1615,20 @@ test('物理模拟实时驱动起跳拉伸、落地缓冲与急转刹步动画�
   // 1. 起跳应立刻触发 takeoffTimer，落地后应触发 landingTimer 与 landingStrength
   session.step(1 / 60, createStaticInputFrame({ p1: { jump: { justPressed: true, held: true } } }));
   assert.ok(p1.takeoffTimer > 0, '按下跳跃离地瞬间应激活起跳拉伸计时器');
+  assert.equal(computeTargetStickmanPose(p1, 0).locomotion, 'jump_rise');
 
   let sawLanding = false;
+  const airPoses = new Set<string>();
   for (let i = 0; i < 90; i += 1) {
     session.step(1 / 60, createStaticInputFrame({}));
+    airPoses.add(computeTargetStickmanPose(p1, 0).locomotion);
     if (p1.onGround && p1.landingTimer > 0 && p1.landingStrength > 0.2) {
       sawLanding = true;
       break;
     }
   }
   assert.equal(sawLanding, true, '从空中落回地面时应激活落地缓冲计时与冲击强度');
+  assert.ok(airPoses.has('air_apex') && airPoses.has('air_fall'));
 
   // 2. 高速向右疾跑后猛拉向左应触发急转刹步 skidTimer
   for (let i = 0; i < 25; i += 1) {
@@ -1621,7 +1637,45 @@ test('物理模拟实时驱动起跳拉伸、落地缓冲与急转刹步动画�
   assert.ok(p1.vx > 180, '持续向右移动应达到疾跑速度');
 
   session.step(1 / 60, createStaticInputFrame({ p1: { moveLeft: { justPressed: true, held: true } } }));
+  assert.ok(p1.vx > 0 && p1.vx < world.rules.moveSpeed, '反向首帧应先减速');
   assert.ok(p1.skidTimer > 0, '高速疾跑突然反拉方向应触发急转刹步姿态计时器');
+});
+
+test('按键和摇杆控制平滑加速与松键减速，低速残余最终归零', () => {
+  const session = createTrainingTestSession('free');
+  const world = session.getWorldState();
+  const [fighter] = world.fighters;
+  const dt = 1 / 60;
+  const idleInput = createStaticInputFrame({});
+  const rightInput = createStaticInputFrame({ p1: { moveRight: { held: true } } });
+
+  for (let c = 4; c <= 16; c += 1) {
+    setTile(world.terrain, c, world.terrain.rows - 2, 'empty');
+    setTile(world.terrain, c, world.terrain.rows - 3, 'empty');
+  }
+  fighter.x = 240;
+  fighter.y = (world.terrain.rows - 1) * STICKMAN_TILE_SIZE;
+  fighter.onGround = true;
+
+  session.step(dt, rightInput);
+  const firstVx = fighter.vx;
+  assert.ok(firstVx > 0 && firstVx < world.rules.moveSpeed);
+  session.step(dt, rightInput);
+  assert.ok(fighter.vx > firstVx && fighter.vx - firstVx < firstVx);
+
+  const beforeRelease = fighter.vx;
+  session.step(dt, idleInput);
+  assert.ok(fighter.vx > 0 && fighter.vx < beforeRelease);
+  for (let i = 0; i < 30; i += 1) session.step(dt, idleInput);
+  assert.equal(fighter.vx, 0);
+
+  const analogInput = {
+    ...idleInput,
+    getMoveVector: () => ({ x: 1, y: 0, magnitude: 0.35 }),
+  };
+  for (let i = 0; i < 24; i += 1) session.step(dt, analogInput);
+  assert.ok(Math.abs(fighter.vx - world.rules.moveSpeed * 0.35 * 1.15) < 1);
+  assert.equal(computeTargetStickmanPose(fighter, 0).locomotion, 'walk');
 });
 
 
