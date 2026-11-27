@@ -337,7 +337,7 @@ export function VirtualGamepadAbxy({
     {
       actionId: 'swap',
       letter: 'B',
-      label: nearbyPickupLabel ? '拾换' : '换武',
+      label: nearbyPickupLabel?.startsWith('使用') ? '血包' : '换武',
       cx: center + diamondRadius,
       cy: center,
       color: nearbyPickupLabel ? '#10B981' : '#475569',

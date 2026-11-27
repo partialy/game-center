@@ -14,6 +14,7 @@ export type StickmanLocomotionState =
   | 'air_apex'
   | 'air_fall'
   | 'landing'
+  | 'crouch'
   | 'skid'
   | 'sprint'
   | 'walk'
@@ -143,7 +144,7 @@ export function computeTargetStickmanPose(
     | 'recoilTimer'
     | 'attack'
     | 'weapon'
-  >,
+  > & { crouching?: boolean },
   elapsedVisual: number,
   maxMoveSpeed = 295
 ): StickmanPose {
@@ -152,7 +153,8 @@ export function computeTargetStickmanPose(
   const speedRatio = clamp(absVx / Math.max(120, maxMoveSpeed), 0, 1);
   const sprintBlend = smoothstep(0.45, 0.88, speedRatio);
   const isAirborne = !f.onGround;
-  const isWalking = f.onGround && speedRatio > 0.08;
+  const isCrouching = Boolean(f.crouching && f.onGround);
+  const isWalking = f.onGround && !isCrouching && speedRatio > 0.08;
   const isJumping = isAirborne && f.vy < -60;
   const isFalling = isAirborne && f.vy > 80;
   const gaitBlend = isWalking ? smoothstep(0.08, 0.30, speedRatio) : 0;
@@ -168,7 +170,7 @@ export function computeTargetStickmanPose(
     : false;
   const isTuckFlip = !f.onGround && f.jumpsUsed >= 2 && f.airSpinAngle > 0.02;
   const isLanding = f.onGround && f.landingTimer > 0.005;
-  const isSkidding = f.onGround && f.skidTimer > 0.005 && absVx > 70;
+  const isSkidding = f.onGround && !isCrouching && f.skidTimer > 0.005 && absVx > 70;
 
   let locomotion: StickmanLocomotionState = 'idle';
   if (!f.alive) locomotion = 'ko';
@@ -178,6 +180,7 @@ export function computeTargetStickmanPose(
   else if (isJumping) locomotion = 'jump_rise';
   else if (isFalling) locomotion = 'air_fall';
   else if (isAirborne) locomotion = 'air_apex';
+  else if (isCrouching) locomotion = 'crouch';
   else if (isLanding && speedRatio < 0.55) locomotion = 'landing';
   else if (isSkidding) locomotion = 'skid';
   else if (isWalking) locomotion = speedRatio >= 0.55 ? 'sprint' : 'walk';
@@ -198,6 +201,9 @@ export function computeTargetStickmanPose(
     const sq = Math.sin(lt * Math.PI) * f.landingStrength;
     poseScaleX = 1 + 0.15 * sq;
     poseScaleY = 1 - 0.15 * sq;
+  } else if (isCrouching) {
+    poseScaleX = 1.06;
+    poseScaleY = 0.94;
   }
 
   // ===== 1. 躯干、重心（hip）与脊柱弧度（spineCurve） =====
@@ -236,6 +242,14 @@ export function computeTargetStickmanPose(
       airHorizLean;
     spineArch = dir * (2.6 * (1 - fallBlend) - 2.4 * fallBlend);
     headTilt = -0.18 * riseBlend + 0.22 * fallBlend;
+  } else if (isCrouching) {
+    // 贴地深蹲戒备：大幅压低重心（与 32px 下蹲碰撞盒严格一致），闪避上段拳击
+    const crouchWalkBob = absVx > 10 ? Math.abs(Math.sin(f.runPhase * 1.15)) * 1.4 : idleWave * 0.65;
+    hipX = -dir * 1.5;
+    hipY = -10.5 + crouchWalkBob;
+    lean = dir * (0.58 + speedRatio * 0.14);
+    spineArch = dir * 4.4;
+    headTilt = -dir * 0.26;
   } else if (isSkidding) {
     // 高速急转刹步：重心压低、上身后仰抵消惯性
     hipX = -dir * 3;
@@ -289,15 +303,21 @@ export function computeTargetStickmanPose(
         lean = dir * (0.14 + strike * 0.3);
       }
     } else if (attack.kind === 'kick') {
-      // 高位飞踢：起脚前微收膝，踢出瞬间大幅后仰平衡
+      // 站姿高位飞踢 vs 蹲姿贴地扫腿
       const ext = isActiveStrike
         ? 1
         : atkRatio < 0.28
         ? atkRatio / 0.28
         : Math.max(0, 1 - (atkRatio - 0.56) / 0.44);
-      lean = -dir * (0.14 + ext * 0.34);
-      hipY -= ext * 2.8;
-      spineArch = -dir * (1.5 + ext * 2.6);
+      if (isCrouching) {
+        lean = -dir * (0.1 + ext * 0.22);
+        hipY = -9.5 + ext * 1.2;
+        spineArch = -dir * (1.2 + ext * 1.6);
+      } else {
+        lean = -dir * (0.14 + ext * 0.34);
+        hipY -= ext * 2.8;
+        spineArch = -dir * (1.5 + ext * 2.6);
+      }
     } else if (attack.kind === 'sword') {
       // 蓄力上举 -> 前扑大弧斩 -> 收势前倾
       if (atkRatio < 0.22) {
@@ -361,11 +381,18 @@ export function computeTargetStickmanPose(
       : Math.max(0, 1 - (atkRatio - 0.56) / 0.44);
     // 支撑腿（地面稳撑 / 空中收膝成飞踢）
     backFootTarget = f.onGround
-      ? { x: hip.x - dir * 7.5, y: 0 }
+      ? { x: hip.x - dir * (isCrouching ? 9.5 : 7.5), y: 0 }
       : { x: hip.x - dir * 11, y: hip.y + 14 };
-    // 踢击腿：蓄力先提膝 -> 爆发高鞭腿直踹
+    // 踢击腿：蹲姿贴地扫腿 / 站姿高位鞭腿
     if (atkRatio < 0.24) {
-      frontFootTarget = { x: hip.x + dir * 11, y: hip.y + 4 };
+      frontFootTarget = isCrouching
+        ? { x: hip.x + dir * 9, y: -2 }
+        : { x: hip.x + dir * 11, y: hip.y + 4 };
+    } else if (isCrouching) {
+      frontFootTarget = {
+        x: hip.x + dir * (15 + ext * 24),
+        y: -2.5 - ext * 2,
+      };
     } else {
       frontFootTarget = {
         x: hip.x + dir * (16 + ext * 22),
@@ -396,6 +423,14 @@ export function computeTargetStickmanPose(
       x: riseBack.x * riseBlend + apexBack.x * apexBlend + fallBack.x * fallBlend,
       y: riseBack.y * riseBlend + apexBack.y * apexBlend + fallBack.y * fallBlend,
     };
+  } else if (isCrouching) {
+    // 蹲姿双膝深屈贴地（移动时小步蹲行）
+    const crouchWalkBlend = smoothstep(0.04, 0.24, speedRatio);
+    const swing = Math.sin(f.runPhase * 1.15);
+    const liftF = Math.max(0, Math.cos(f.runPhase * 1.15)) * 2.8 * crouchWalkBlend;
+    const liftB = Math.max(0, -Math.cos(f.runPhase * 1.15)) * 2.8 * crouchWalkBlend;
+    frontFootTarget = { x: hip.x + dir * (12 + swing * 5.5 * crouchWalkBlend), y: -liftF };
+    backFootTarget = { x: hip.x - dir * (10.5 - swing * 5.5 * crouchWalkBlend), y: -liftB };
   } else if (isSkidding) {
     // 急停刹步：前脚斜前蹬地刹车，后脚屈膝压低
     frontFootTarget = { x: hip.x + dir * 15, y: 0 };
@@ -587,6 +622,10 @@ export function computeTargetStickmanPose(
       x: riseB.x * riseBlend + apexB.x * apexBlend + fallB.x * fallBlend,
       y: riseB.y * riseBlend + apexB.y * apexBlend + fallB.y * fallBlend,
     };
+  } else if (isCrouching) {
+    // 下蹲低架势护手
+    frontHandTarget = { x: shoulder.x + dir * 13, y: shoulder.y + 5 + idleWave * 0.7 };
+    backHandTarget = { x: shoulder.x + dir * 3, y: shoulder.y + 7.5 - idleWave * 0.5 };
   } else if (isSkidding) {
     // 急停双臂向外展开保持平衡
     frontHandTarget = { x: shoulder.x + dir * 14, y: shoulder.y + 2 };
@@ -681,7 +720,11 @@ export function blendStickmanPose(
     target.locomotion === 'hitstun' ||
     target.locomotion === 'double_jump_tuck' ||
     target.locomotion === 'ko';
-  const rate = isSnappy ? 30 : target.locomotion === 'jump_rise' ? 24 : 17;
+  const rate = isSnappy
+    ? 30
+    : target.locomotion === 'jump_rise' || target.locomotion === 'crouch'
+    ? 24
+    : 17;
   const t = 1 - Math.exp(-rate * Math.min(0.05, dtSeconds));
 
   return {

@@ -1678,6 +1678,157 @@ test('按键和摇杆控制平滑加速与松键减速，低速残余最终归�
   assert.equal(computeTargetStickmanPose(fighter, 0).locomotion, 'walk');
 });
 
+test('空手触碰地面武器直接自动拾取（无需按键），持有武器时必须按换武键才替换', () => {
+  const session = createTestSession({ maxHp: 100 });
+  const world = session.getWorldState();
+  const [p1, p2] = world.fighters;
+  const floorY = (STICKMAN_GRID_ROWS - 1) * STICKMAN_TILE_SIZE;
+
+  for (let c = 4; c <= 20; c += 1) {
+    setTile(world.terrain, c, STICKMAN_GRID_ROWS - 2, 'empty');
+    setTile(world.terrain, c, STICKMAN_GRID_ROWS - 3, 'empty');
+  }
+
+  p1.x = 260;
+  p1.y = floorY;
+  p1.vx = 0;
+  p1.vy = 0;
+  p1.onGround = true;
+  p1.weapon = null;
+  p2.x = 800;
+  p2.y = floorY;
+  p2.onGround = true;
+
+  world.pickups = [
+    {
+      id: 7001,
+      kind: 'pistol',
+      remaining: 3,
+      max: 3,
+      x: p1.x + 12,
+      y: floorY - 15,
+      vx: 0,
+      vy: 0,
+      radius: 15,
+      onGround: true,
+      age: 0,
+      lifetime: 30,
+      pickupLockTimer: 0,
+      droppedBySlotId: null,
+    },
+  ];
+
+  // 1. 未按任何键：空手接触武器直接自动装备
+  session.step(1 / 60, createStaticInputFrame({}));
+  assert.equal(p1.weapon?.kind, 'pistol', '空手触碰地面武器应无需按键直接自动拾取');
+  assert.equal(world.pickups.length, 0, '自动拾取后该地面武器应从场景移除');
+
+  // 2. 持有手枪时在身旁放入长剑：不按换武键不应自动顶替，但会显示换武器提示
+  world.pickups.push({
+    id: 7002,
+    kind: 'sword',
+    remaining: 5,
+    max: 5,
+    x: p1.x + 10,
+    y: floorY - 15,
+    vx: 0,
+    vy: 0,
+    radius: 15,
+    onGround: true,
+    age: 0,
+    lifetime: 30,
+    pickupLockTimer: 0,
+    droppedBySlotId: null,
+  });
+  p1.swapCooldown = 0;
+  session.step(1 / 60, createStaticInputFrame({}));
+  assert.equal(p1.weapon?.kind, 'pistol', '持有武器时接触新武器不应自动替换');
+  assert.equal(p1.nearbyDropId, 7002, '持有武器靠近新武器应给出换武提示');
+
+  // 3. 按下换武键后替换为长剑，原手枪掉回地面
+  session.step(1 / 60, createStaticInputFrame({ p1: { swap: { justPressed: true, held: true } } }));
+  assert.equal(p1.weapon?.kind, 'sword', '持有武器时按下换武键应切换为新武器');
+  assert.ok(
+    world.pickups.some((d) => d.kind === 'pistol' && d.remaining === 3),
+    '替换下来的原手枪应保留弹药掉落在地上'
+  );
+});
+
+test('火柴人支持下蹲（降低身高与深蹲姿态）：下蹲后完全躲避空手拳头，但飞踢可以命中', () => {
+  const session = createTestSession({ maxHp: 100, hurtInvulnSeconds: 0 });
+  const world = session.getWorldState();
+  const [p1, p2] = world.fighters;
+  const floorY = (STICKMAN_GRID_ROWS - 1) * STICKMAN_TILE_SIZE;
+
+  for (let c = 4; c <= 20; c += 1) {
+    setTile(world.terrain, c, STICKMAN_GRID_ROWS - 2, 'empty');
+    setTile(world.terrain, c, STICKMAN_GRID_ROWS - 3, 'empty');
+  }
+
+  p1.x = 340;
+  p1.y = floorY;
+  p1.vx = 0;
+  p1.vy = 0;
+  p1.onGround = true;
+  p1.facing = 1;
+  p1.weapon = null;
+
+  p2.x = 374;
+  p2.y = floorY;
+  p2.vx = 0;
+  p2.vy = 0;
+  p2.onGround = true;
+  p2.facing = -1;
+  p2.weapon = null;
+  p2.hp = 100;
+
+  const standingHeight = p2.height;
+  const standingPose = computeTargetStickmanPose(p2, 0, world.rules.moveSpeed);
+
+  // 1. p2 按住下键进入下蹲，身高降低且 IK 姿态切为 crouch、重心与头部明显压低
+  session.step(1 / 60, createStaticInputFrame({ p2: { aimDown: { held: true } } }));
+  assert.equal(p2.crouching, true, '地面按住下键应进入下蹲状态');
+  assert.ok(p2.height < standingHeight - 15, `下蹲身高应显著降低，站姿=${standingHeight} 蹲姿=${p2.height}`);
+  const crouchPose = computeTargetStickmanPose(p2, 0, world.rules.moveSpeed);
+  assert.equal(crouchPose.locomotion, 'crouch', '下蹲时骨骼姿态应切换为 crouch');
+  assert.ok(crouchPose.hip.y > standingPose.hip.y + 6, '下蹲时骨盆重心应明显更贴近地面');
+  assert.ok(crouchPose.head.y > standingPose.head.y + 10, '下蹲时头部应显著压低');
+
+  // 2. p1 贴脸出拳攻击下蹲的 p2 -> 拳头从头顶挥空，0 伤害
+  session.step(
+    1 / 60,
+    createStaticInputFrame({
+      p1: { attack: { justPressed: true, held: true } },
+      p2: { aimDown: { held: true } },
+    })
+  );
+  for (let i = 0; i < 16; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({ p2: { aimDown: { held: true } } }));
+  }
+  assert.equal(p2.hp, 100, '下蹲后空手拳头应完全挥空，不造成伤害');
+  assert.equal(p2.crouching, true, '未被击中时应持续保持下蹲');
+
+  // 3. p1 贴脸飞踢攻击下蹲的 p2 -> 腿部攻击命中扣血并打断下蹲
+  p1.x = p2.x - 32;
+  p1.attack = null;
+  p1.attackCooldown = 0;
+  p1.facing = 1;
+  session.step(
+    1 / 60,
+    createStaticInputFrame({
+      p1: { kick: { justPressed: true, held: true } },
+      p2: { aimDown: { held: true } },
+    })
+  );
+  for (let i = 0; i < 14; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({ p2: { aimDown: { held: true } } }));
+  }
+  assert.ok(p2.hp < 100, '飞踢应能命中下蹲的火柴人并造成伤害');
+});
+
+
 
 
 

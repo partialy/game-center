@@ -77,6 +77,8 @@ export interface StickFighter {
   alive: boolean;
   onGround: boolean;
   onPlatform: boolean;
+  /** 是否处于下蹲姿态（可躲避空手出拳，仍会被飞踢与长剑命中） */
+  crouching: boolean;
   coyoteTimer: number;
   jumpBufferTimer: number;
   jumpsUsed: number;

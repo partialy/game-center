@@ -18,6 +18,7 @@ import {
   destroySingleNearestTile,
   destroyTerrainInRadius,
   findValidDropSurface,
+  getTile,
   moveBodyWithTerrain,
   sampleProjectileTerrainHit,
 } from '../map/terrain';
@@ -65,6 +66,7 @@ import {
 
 const FIGHTER_HALF_WIDTH = 13;
 const FIGHTER_HEIGHT = 54;
+const FIGHTER_CROUCH_HEIGHT = 32;
 const GROUND_MOVE_RESPONSE = 19;
 const GROUND_BRAKE_RESPONSE = 23;
 const GROUND_TURN_RESPONSE = 13;
@@ -73,6 +75,7 @@ const COYOTE_TIME_SECONDS = 0.085;
 const JUMP_BUFFER_SECONDS = 0.095;
 const DROP_THROUGH_SECONDS = 0.19;
 const PICKUP_INTERACT_RADIUS = 56;
+const AUTO_PICKUP_WEAPON_RADIUS = 44;
 const PICKUP_DROP_OFFSET_Y = 46;
 const GRENADE_BLAST_RADIUS = 38;
 const ROUND_OVER_BANNER_SECONDS = 2.1;
@@ -119,6 +122,7 @@ function createFighter(
     alive: true,
     onGround: false,
     onPlatform: false,
+    crouching: false,
     coyoteTimer: 0,
     jumpBufferTimer: 0,
     jumpsUsed: 0,
@@ -1048,20 +1052,28 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       f.hitStunTimer = Math.max(0, f.hitStunTimer - dt);
     }
 
-    // 更新朝向与 8 向瞄准（受击硬直时锁朝向）
+    // 1.5. 下蹲状态更新（地面按住下键或摇杆向下进入下蹲；头顶有实体砖块阻挡时保持下蹲直到净空）
+    const holdingDown = aimDown || (dirY > 0.48 && dirY >= Math.abs(dirX) * 0.72);
+    const blockedStanding = f.crouching && f.onGround && !this.canStandUp(f);
+    f.crouching = f.onGround && !inHitStun && (holdingDown || blockedStanding);
+    f.height = f.crouching ? FIGHTER_CROUCH_HEIGHT : FIGHTER_HEIGHT;
+
+    // 更新朝向与 8 向瞄准（受击硬直时锁朝向；地面下蹲时保持水平瞄准，避免误射脚下地板）
     if (!inHitStun && !f.attack) {
       if (dirX > 0.18) f.facing = 1;
       else if (dirX < -0.18) f.facing = -1;
     }
-    const aim = resolveEightWayAim(dirX, dirY, f.facing);
+    const effectiveAimY = f.crouching && f.onGround ? 0 : dirY;
+    const aim = resolveEightWayAim(dirX, effectiveAimY, f.facing);
     f.aimX = aim.x;
     f.aimY = aim.y;
 
     // 2. 水平速度向当前按键或摇杆的目标速度插值，独立处理后坐力与受击。
     if (!inHitStun) {
       const hasMoveInput = Math.abs(dirX) > 0.14;
+      const crouchSpeedScale = f.crouching && f.onGround ? 0.38 : 1;
       const targetVx = hasMoveInput
-        ? Math.sign(dirX) * Math.min(1, Math.abs(dirX) * 1.15) * this.rules.moveSpeed
+        ? Math.sign(dirX) * Math.min(1, Math.abs(dirX) * 1.15) * this.rules.moveSpeed * crouchSpeedScale
         : 0;
       const deltaVx = targetVx - f.vx;
       if (f.recoilTimer > 0) {
@@ -1099,10 +1111,11 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       f.coyoteTimer = Math.max(0, f.coyoteTimer - dt);
     }
 
-    const holdingDown = dirY > 0.55;
     if (!inHitStun && f.jumpBufferTimer > 0) {
       if (holdingDown && f.onGround && f.onPlatform) {
         // 下 + 跳：主动下穿短平台
+        f.crouching = false;
+        f.height = FIGHTER_HEIGHT;
         f.dropThroughTimer = DROP_THROUGH_SECONDS;
         f.y += 4;
         f.vy = Math.max(f.vy, 110);
@@ -1111,8 +1124,13 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         f.coyoteTimer = 0;
         f.jumpBufferTimer = 0;
         sounds.push('stick_jump');
-      } else if (f.coyoteTimer > 0 || f.jumpsUsed < f.maxJumps) {
+      } else if (
+        (f.coyoteTimer > 0 || f.jumpsUsed < f.maxJumps) &&
+        (!f.crouching || this.canStandUp(f))
+      ) {
         const isDoubleJump = f.coyoteTimer <= 0 && f.jumpsUsed > 0;
+        f.crouching = false;
+        f.height = FIGHTER_HEIGHT;
         f.vy = -this.rules.jumpVelocity * (isDoubleJump ? 0.93 : 1);
         f.onGround = false;
         f.onPlatform = false;
@@ -1136,7 +1154,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       }
     }
 
-    // 4. 拾取 / 换武器（右 / B）
+    // 4. 换武器（右 / B：空手时接触武器直接自动拾取，有武器时才需按此键替换）
     if (!inHitStun && swapAct.justPressed && f.swapCooldown <= 0) {
       this.tryManualPickupOrSwap(f, sounds);
     }
@@ -1161,6 +1179,10 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     const prevVy = f.vy;
     f.vy += this.rules.gravity * dt;
     moveBodyWithTerrain(this.world.terrain, f, dt, f.dropThroughTimer > 0, 0);
+    if (!f.onGround && f.crouching) {
+      f.crouching = false;
+      f.height = FIGHTER_HEIGHT;
+    }
     if (!inHitStun && f.onGround && f.recoilTimer <= 0) {
       // 碰撞后用实际速度推进步态，贴墙或起跳时停止推进。
       const speed = Math.abs(f.vx);
@@ -1178,6 +1200,23 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
 
     this.updateScarf(f, dt);
     this.smoothDisplayHp(f, dt);
+  }
+
+  private canStandUp(f: StickFighter): boolean {
+    const ts = this.world.terrain.tileSize;
+    const minCol = Math.floor((f.x - f.halfWidth + 1) / ts);
+    const maxCol = Math.floor((f.x + f.halfWidth - 1) / ts);
+    const minRow = Math.floor((f.y - FIGHTER_HEIGHT + 1) / ts);
+    const maxRow = Math.floor((f.y - FIGHTER_CROUCH_HEIGHT - 1) / ts);
+    for (let r = minRow; r <= maxRow; r += 1) {
+      for (let c = minCol; c <= maxCol; c += 1) {
+        const tile = getTile(this.world.terrain, c, r);
+        if (tile === 'brick' || tile === 'bedrock') {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   private startAttack(
@@ -1233,13 +1272,19 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         comboStep: 0,
         projectileFired: false,
       };
-      f.vx += f.facing * 140;
+      f.vx += f.facing * (f.crouching ? 105 : 140);
       sounds.push('stick_kick');
       this.world.slashes.push({
         x: f.x + f.facing * 24,
-        y: f.y - f.height * 0.45,
-        angle: f.facing > 0 ? -0.25 : Math.PI + 0.25,
-        radius: 32,
+        y: f.crouching ? f.y - 13 : f.y - f.height * 0.45,
+        angle: f.crouching
+          ? f.facing > 0
+            ? 0.08
+            : Math.PI - 0.08
+          : f.facing > 0
+          ? -0.25
+          : Math.PI + 0.25,
+        radius: f.crouching ? 29 : 32,
         arcSpan: 1.5,
         color: '#F59E0B',
         age: 0,
@@ -1358,9 +1403,14 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       atk.elapsed <= atk.activeEnd
     ) {
       const reach = atk.kind === 'sword' ? 68 : atk.kind === 'kick' ? 46 : 38;
-      const heightReach = atk.kind === 'sword' ? 52 : 42;
+      const heightReach = atk.kind === 'sword' ? 54 : atk.kind === 'kick' ? 46 : 42;
       const hitCenterX = f.x + f.facing * (reach * 0.56);
-      const hitCenterY = f.y - f.height * (atk.kind === 'kick' ? 0.44 : 0.58);
+      const hitCenterY =
+        atk.kind === 'kick'
+          ? f.y - Math.min(f.height * 0.42, 20)
+          : atk.kind === 'sword'
+          ? f.y - f.height * 0.52
+          : f.y - f.height * 0.62;
 
       // 长剑斩弹：挥剑可砍碎手枪/猎枪/手雷碎片等子弹（火箭筒不可砍），发出「叮」声并扣 1 耐久
       if (atk.kind === 'sword' && f.weapon?.kind === 'sword' && f.weapon.remaining > 0) {
@@ -1446,6 +1496,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         if (target.slotId === f.slotId || !target.alive || target.invulnTimer > 0) continue;
         if (atk.hitSlotIds.includes(target.slotId)) continue;
         if (atk.kind === 'sword' && (!f.weapon || f.weapon.kind !== 'sword')) break;
+        // 下蹲可完全闪避空手拳头（从头顶挥空），腿部飞踢与长剑仍可命中
+        if (atk.kind === 'punch' && target.crouching && target.onGround) continue;
 
         const targetCenterY = target.y - target.height * 0.5;
         const dx = Math.abs(target.x - hitCenterX);
@@ -1776,6 +1828,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     }
     target.onGround = false;
     target.onPlatform = false;
+    target.crouching = false;
+    target.height = FIGHTER_HEIGHT;
     target.hitStunTimer = Math.max(target.hitStunTimer, stunSeconds);
     target.hitFlashTimer = 0.12;
     const tr = this.world.training;
@@ -2435,6 +2489,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
   }
 
   private refreshNearbyPickupsAndAutoMedkit(sounds: SoundEventKind[]): void {
+    const trainingDummySlot = this.world.training ? this.world.fighters[1]?.slotId ?? null : null;
+
     for (const f of this.world.fighters) {
       if (!f.alive) {
         f.nearbyDropId = null;
@@ -2442,9 +2498,10 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         continue;
       }
 
+      const fcY = f.y - f.height * 0.45;
+
       // 1. 血包在角色不满血且贴近时自动生效（恢复 25%，绝不顶掉手持武器）
       if (f.hp < f.maxHp) {
-        const fcY = f.y - f.height * 0.45;
         for (let i = this.world.pickups.length - 1; i >= 0; i -= 1) {
           const d = this.world.pickups[i];
           if (d.kind !== 'medkit') continue;
@@ -2455,17 +2512,73 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         }
       }
 
-      // 2. 更新附近武器提示（用于画布交互标签 & ABXY 右键脉冲提示）
-      const nearWeapon = this.findClosestPickupFor(f, false);
+      // 2. 空手触碰地面武器直接自动拾取（无需按键）；已持有武器时才需要按换武键切换
+      if (!f.weapon && f.hitStunTimer <= 0 && f.slotId !== trainingDummySlot) {
+        for (let i = this.world.pickups.length - 1; i >= 0; i -= 1) {
+          const d = this.world.pickups[i];
+          if (d.kind === 'medkit') continue;
+          if (d.pickupLockTimer > 0 && d.droppedBySlotId === f.slotId) continue;
+          const dist = Math.hypot(d.x - f.x, d.y - fcY);
+          const overlapBox =
+            Math.abs(d.x - f.x) <= f.halfWidth + d.radius + 10 &&
+            d.y >= f.y - f.height - d.radius &&
+            d.y <= f.y + d.radius;
+          if (dist <= AUTO_PICKUP_WEAPON_RADIUS || overlapBox) {
+            this.equipWeaponPickup(f, i, sounds);
+            break;
+          }
+        }
+      }
+
+      // 3. 仅在已持有武器时展示附近「换武器」提示（空手走近已直接自动拾取）
+      const nearWeapon = f.weapon ? this.findClosestPickupFor(f, false) : null;
       if (nearWeapon) {
         f.nearbyDropId = nearWeapon.id;
-        f.nearbyDropLabel = `${f.weapon ? '换' : '捡'} ${PICKUP_LABELS[nearWeapon.kind]}`;
+        f.nearbyDropLabel = `换 ${PICKUP_LABELS[nearWeapon.kind]}`;
       } else {
         const nearMed = f.hp < f.maxHp ? this.findClosestPickupFor(f, true) : null;
         f.nearbyDropId = nearMed ? nearMed.id : null;
         f.nearbyDropLabel = nearMed ? '使用 血包' : null;
       }
     }
+  }
+
+  private equipWeaponPickup(
+    f: StickFighter,
+    pickupIndex: number,
+    sounds: SoundEventKind[]
+  ): void {
+    const picked = this.world.pickups[pickupIndex];
+    if (!picked || picked.kind === 'medkit') return;
+    this.world.pickups.splice(pickupIndex, 1);
+    const droppedOld = swapFighterWeapon(f, picked, this.nextEntityId++);
+    if (droppedOld) {
+      this.world.pickups.push(droppedOld);
+    }
+    f.swapCooldown = 0.25;
+
+    const stats = this.world.stats[f.slotId];
+    if (stats) stats.itemsPicked += 1;
+
+    this.spawnSparkBurst(
+      f.x,
+      f.y - f.height * 0.55,
+      f.facing,
+      -0.3,
+      6,
+      PICKUP_ACCENTS[picked.kind]
+    );
+    this.world.floatingTexts.push({
+      x: f.x,
+      y: f.y - f.height - 12,
+      vy: -44,
+      text: `装备 ${PICKUP_LABELS[picked.kind]}`,
+      color: PICKUP_ACCENTS[picked.kind],
+      scale: 0.95,
+      age: 0,
+      maxAge: 0.8,
+    });
+    sounds.push('stick_swap');
   }
 
   private consumeMedkit(f: StickFighter, pickupIndex: number, sounds: SoundEventKind[]): void {
@@ -2525,34 +2638,14 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       return;
     }
 
-    // 拾取/替换武器：原武器带剩余耐久/弹药抛落地面
-    const picked = this.world.pickups[idx];
-    this.world.pickups.splice(idx, 1);
-    const droppedOld = swapFighterWeapon(f, picked, this.nextEntityId++);
-    if (droppedOld) {
-      this.world.pickups.push(droppedOld);
-    }
-    f.swapCooldown = 0.25;
-
-    const stats = this.world.stats[f.slotId];
-    if (stats) stats.itemsPicked += 1;
-
-    this.world.floatingTexts.push({
-      x: f.x,
-      y: f.y - f.height - 12,
-      vy: -44,
-      text: `装备 ${PICKUP_LABELS[picked.kind]}`,
-      color: PICKUP_ACCENTS[picked.kind],
-      scale: 0.95,
-      age: 0,
-      maxAge: 0.8,
-    });
-    sounds.push('stick_swap');
+    // 仅手持武器时需要按键替换（空手触碰已直接自动拾取）
+    if (!f.weapon) return;
+    this.equipWeaponPickup(f, idx, sounds);
   }
 
   private updateScarf(f: StickFighter, dt: number): void {
     const headX = f.x - f.facing * 2;
-    const headY = f.y - f.height + 12;
+    const headY = f.y - f.height + (f.crouching ? 8 : 12);
     if (f.scarf.length === 0) return;
     f.scarf[0].x = headX;
     f.scarf[0].y = headY;

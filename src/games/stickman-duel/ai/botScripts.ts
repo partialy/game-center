@@ -320,16 +320,14 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
       wantsJump = true;
     }
 
-    // 6. 拾取 / 换武器决策
+    // 6. 换武器决策（空手触碰地面武器自动拾取，仅持武时按换武键替换）
     let wantsSwap = false;
     if (self.nearbyDropId !== null) {
       const nearby = world.pickups.find((d) => d.id === self.nearbyDropId);
       if (nearby) {
         if (nearby.kind === 'medkit') {
           wantsSwap = self.hp < self.maxHp;
-        } else if (!self.weapon) {
-          wantsSwap = true;
-        } else if (this.profile.smartSwap) {
+        } else if (self.weapon && this.profile.smartSwap) {
           const curScore =
             WEAPON_RANK[self.weapon.kind] * (0.4 + 0.6 * (self.weapon.remaining / self.weapon.max));
           const newScore =
@@ -447,14 +445,17 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
           intent.moveLeft = false;
         }
 
-        // 持剑优先挥剑，空手交替拳击与重踢击飞
+        // 持剑优先挥剑；对手下蹲时拳头会挥空，优先用飞踢破防
         if (self.weapon?.kind === 'sword') {
           if (horizDist < 42 && this.rng.next() < this.profile.comboSkill * 0.28) {
             wantsKick = true;
           } else {
             wantsAttack = true;
           }
-        } else if (horizDist <= 64 && this.rng.next() < 0.25 + this.profile.comboSkill * 0.28) {
+        } else if (
+          (target.crouching && target.onGround) ||
+          (horizDist <= 64 && this.rng.next() < 0.25 + this.profile.comboSkill * 0.28)
+        ) {
           wantsKick = true;
         } else {
           wantsAttack = true;
