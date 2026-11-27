@@ -27,6 +27,11 @@ export const STICKMAN_ITEM_ACCENTS: Record<StickPickupKind, StickmanItemAccent> 
     bg: 'rgba(239, 68, 68, 0.14)',
     border: '#EF4444',
   },
+  grenade: {
+    fg: '#4D7C0F',
+    bg: 'rgba(132, 204, 22, 0.16)',
+    border: '#84CC16',
+  },
   medkit: {
     fg: '#059669',
     bg: 'rgba(16, 185, 129, 0.14)',
@@ -205,6 +210,72 @@ export function StickmanItemIcon({
           <rect x="14" y="13.5" width="8" height="3.5" rx="1" fill="#334155" />
           <rect x="17" y="30" width="4.5" height="6.5" rx="1.2" fill="#1E293B" />
         </g>
+      </svg>
+    );
+  }
+
+  if (kind === 'grenade') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+        {/* 六向微碎片辐射示意点 */}
+        <circle cx="9" cy="18" r="1.6" fill="#84CC16" opacity="0.7" />
+        <circle cx="39" cy="18" r="1.6" fill="#84CC16" opacity="0.7" />
+        <circle cx="8" cy="30" r="1.5" fill="#65A30D" opacity="0.6" />
+        <circle cx="40" cy="30" r="1.5" fill="#65A30D" opacity="0.6" />
+        {/* 握把保险勺 */}
+        <path
+          d="M27 11 C33 12 36 17 35.5 25"
+          fill="none"
+          stroke="#475569"
+          strokeWidth="3"
+          strokeLinecap="round"
+        />
+        {/* 顶盖与拉环 */}
+        <rect
+          x="19.5"
+          y="9.5"
+          width="9"
+          height="5"
+          rx="1.6"
+          fill="#334155"
+          stroke="#1E293B"
+          strokeWidth="1.3"
+        />
+        <circle
+          cx="15.5"
+          cy="11.5"
+          r="3.2"
+          fill="none"
+          stroke="#F59E0B"
+          strokeWidth="2"
+        />
+        {/* 橄榄绿破片手雷椭球主体 */}
+        <ellipse
+          cx="24"
+          cy="27.5"
+          rx="11"
+          ry="13"
+          fill="#4D7C0F"
+          stroke="#1A2E05"
+          strokeWidth="1.8"
+        />
+        {/* 高光与破片格纹 */}
+        <path
+          d="M15 23 H33 M14 28 H34 M15.5 33 H32.5"
+          stroke="#1A2E05"
+          strokeWidth="1.3"
+          opacity="0.75"
+        />
+        <path
+          d="M20 15.5 C18.5 22 18.5 32 20 39.5 M28 15.5 C29.5 22 29.5 32 28 39.5"
+          fill="none"
+          stroke="#1A2E05"
+          strokeWidth="1.3"
+          opacity="0.75"
+        />
+        {/* 亮绿警戒腰带 */}
+        <rect x="13.5" y="25.8" width="21" height="3.2" rx="1" fill="#A3E635" opacity="0.88" />
+        <ellipse cx="19.5" cy="21" rx="2.4" ry="4" fill="#D9F99D" opacity="0.32" />
       </svg>
     );
   }

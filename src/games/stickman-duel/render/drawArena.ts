@@ -1,8 +1,13 @@
 import type { GameRenderer } from '../../../platform/games/contracts';
 import { getTile } from '../map/terrain';
-import { PICKUP_ACCENTS, PICKUP_LABELS } from '../simulation/combat';
+import {
+  PICKUP_ACCENTS,
+  PICKUP_LABELS,
+  computeGrenadeThrowVelocity,
+} from '../simulation/combat';
 import type {
   GroundPickup,
+  ProjectileTrailEffect,
   StickFighter,
   StickmanDuelRules,
   StickmanTerrain,
@@ -166,6 +171,7 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     this.drawTerrain(ctx, world.terrain, palette);
     this.drawPickups(ctx, world, palette);
     this.drawSlashes(ctx, world);
+    this.drawProjectileTrails(ctx, world.projectileTrails);
     this.drawFighters(ctx, world, palette);
     this.drawProjectiles(ctx, world.projectiles);
     this.drawExplosions(ctx, world);
@@ -546,6 +552,33 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.fill();
       ctx.fillStyle = '#FCD34D';
       ctx.fillRect(-3, -4, 4, 8);
+    } else if (drop.kind === 'grenade') {
+      // 碎片手雷：军绿纺锤雷体 + 破片格纹 + 保险环
+      ctx.fillStyle = '#365314';
+      ctx.beginPath();
+      ctx.ellipse(0, 2, 7.2, 8.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.strokeStyle = '#BEF264';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-6, 0);
+      ctx.lineTo(6, 0);
+      ctx.moveTo(-5.5, 4);
+      ctx.lineTo(5.5, 4);
+      ctx.moveTo(0, -5);
+      ctx.lineTo(0, 9);
+      ctx.stroke();
+      // 顶部引信与拉环
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(-2.5, -9, 5, 3.5);
+      ctx.strokeStyle = '#FACC15';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(4.8, -8, 2.5, 0, Math.PI * 2);
+      ctx.stroke();
     } else {
       // 医疗血包
       ctx.fillStyle = '#FFFFFF';
@@ -613,11 +646,14 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.restore();
     }
 
-    // 远程武器 8 向瞄准辅助线（手枪直线 / 猎枪 30° 扇形 / 火箭抛物线）
+    // 远程武器 8 向瞄准辅助线（手枪直线 / 猎枪 30° 扇形 / 火箭与手雷抛物线）
     if (
       f.alive &&
       f.weapon &&
-      (f.weapon.kind === 'pistol' || f.weapon.kind === 'shotgun' || f.weapon.kind === 'rocket')
+      (f.weapon.kind === 'pistol' ||
+        f.weapon.kind === 'shotgun' ||
+        f.weapon.kind === 'rocket' ||
+        f.weapon.kind === 'grenade')
     ) {
       this.drawAimGuide(ctx, f, rules);
     }
@@ -752,7 +788,10 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
 
     if (
       f.weapon &&
-      (f.weapon.kind === 'pistol' || f.weapon.kind === 'shotgun' || f.weapon.kind === 'rocket')
+      (f.weapon.kind === 'pistol' ||
+        f.weapon.kind === 'shotgun' ||
+        f.weapon.kind === 'rocket' ||
+        f.weapon.kind === 'grenade')
     ) {
       weaponAngle = Math.atan2(f.aimY, f.aimX);
       const recoil = attack && isActivePhase ? -5 : 0;
@@ -956,6 +995,22 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.fillRect(-3, -4, 8, 5);
       ctx.fillStyle = '#B45309';
       ctx.fillRect(6, 0.8, 10, 3.2);
+    } else if (kind === 'grenade') {
+      // 手持碎片手雷：紧握掌心的小型军绿破片雷 + 亮黄拉环
+      ctx.fillStyle = '#365314';
+      ctx.beginPath();
+      ctx.ellipse(3, 0, 5.8, 6.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#84CC16';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(1, -8, 4, 3);
+      ctx.strokeStyle = '#FACC15';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(6.5, -7, 2.1, 0, Math.PI * 2);
+      ctx.stroke();
     } else {
       // 火箭筒（肩扛式）
       const flipY = facing === -1 && Math.cos(angle) < 0 ? -1 : 1;
@@ -1021,6 +1076,20 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.moveTo(ox, oy);
       ctx.lineTo(ox + Math.cos(baseAngle + halfSpread) * coneLen, oy + Math.sin(baseAngle + halfSpread) * coneLen);
       ctx.stroke();
+    } else if (f.weapon.kind === 'grenade') {
+      // 碎片手雷 8 方向抛物线预览虚点
+      ctx.fillStyle = '#84CC16';
+      const vel = computeGrenadeThrowVelocity(f.aimX, f.aimY, rules.grenadeSpeed);
+      const g = rules.grenadeGravity;
+      for (let i = 1; i <= 7; i += 1) {
+        const t = i * 0.05;
+        const px = ox + vel.vx * t;
+        const py = oy + vel.vy * t + 0.5 * g * t * t;
+        ctx.globalAlpha = 0.62 - i * 0.068;
+        ctx.beginPath();
+        ctx.arc(px, py, 2.5 - i * 0.16, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else if (f.weapon.kind === 'rocket') {
       // 短抛物线落点虚点预览，直观体现火箭受重力下坠
       ctx.fillStyle = '#F97316';
@@ -1037,6 +1106,28 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       }
     }
     ctx.restore();
+  }
+
+  private drawProjectileTrails(
+    ctx: CanvasRenderingContext2D,
+    trails: ProjectileTrailEffect[]
+  ): void {
+    for (const tr of trails) {
+      const life = 1 - clamp(tr.age / Math.max(0.01, tr.maxAge), 0, 1);
+      ctx.save();
+      ctx.lineCap = 'round';
+      const grad = ctx.createLinearGradient(tr.x1, tr.y1, tr.x2, tr.y2);
+      grad.addColorStop(0, `rgba(251, 146, 60, ${0.06 * life})`);
+      grad.addColorStop(0.55, `rgba(251, 146, 60, ${0.34 * life})`);
+      grad.addColorStop(1, `rgba(255, 247, 237, ${0.52 * life})`);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = Math.max(1, tr.width * (0.55 + 0.45 * life));
+      ctx.beginPath();
+      ctx.moveTo(tr.x1, tr.y1);
+      ctx.lineTo(tr.x2, tr.y2);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   private drawProjectiles(
@@ -1062,19 +1153,64 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
         ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         ctx.fill();
       } else if (p.kind === 'shotgun') {
-        // 猎枪散射小弹丸：炽橙短拖尾 + 亮核小丸
-        ctx.strokeStyle = '#FB923C';
-        ctx.lineWidth = 2.4;
+        // 猎枪 3 枚散弹：从发射点到当前散开点的半透明渐变视觉轨迹 + 亮核小弹丸
+        const trailGrad = ctx.createLinearGradient(p.originX, p.originY, p.x, p.y);
+        trailGrad.addColorStop(0, 'rgba(251, 146, 60, 0.08)');
+        trailGrad.addColorStop(0.65, 'rgba(251, 146, 60, 0.36)');
+        trailGrad.addColorStop(1, 'rgba(255, 247, 237, 0.62)');
+        ctx.strokeStyle = trailGrad;
+        ctx.lineWidth = 2.8;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(p.originX, p.originY);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#FFF7ED';
+        ctx.strokeStyle = '#EA580C';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else if (p.kind === 'shrapnel') {
+        // 手雷 6 向高速金属碎片：青柠-银白尖锐菱形破片与短尾迹
+        ctx.strokeStyle = 'rgba(190, 242, 100, 0.72)';
+        ctx.lineWidth = 2.1;
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(p.prevX - Math.cos(angle) * 10, p.prevY - Math.sin(angle) * 10);
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
 
-        ctx.fillStyle = '#FFF7ED';
+        ctx.translate(p.x, p.y);
+        ctx.rotate(angle);
+        ctx.fillStyle = '#ECFCCB';
+        ctx.strokeStyle = '#65A30D';
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.moveTo(5, 0);
+        ctx.lineTo(-2, -2.6);
+        ctx.lineTo(-4, 0);
+        ctx.lineTo(-2, 2.6);
+        ctx.closePath();
         ctx.fill();
+        ctx.stroke();
+      } else if (p.kind === 'grenade') {
+        // 抛物线翻滚飞行中的碎片手雷
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.age * 11 * (p.vx >= 0 ? 1 : -1));
+        ctx.fillStyle = '#365314';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 5.8, 6.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#84CC16';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.fillStyle = '#BEF264';
+        ctx.fillRect(-3.8, -1, 7.6, 2);
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(-2, -8, 4, 2.8);
       } else {
         // 火箭弹体 + 尾焰
         ctx.translate(p.x, p.y);

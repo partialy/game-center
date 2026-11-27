@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Crosshair, Footprints, Hand, Repeat, Rocket, Sword } from 'lucide-react';
+import { ArrowUp, Bomb, Crosshair, Footprints, Hand, Repeat, Rocket, Sword } from 'lucide-react';
 import { useMobileViewport } from '../mobile/MobileViewportContext';
 
 interface VirtualGamepadAbxyProps {
@@ -277,6 +277,8 @@ export function VirtualGamepadAbxy({
       ? '散射'
       : weaponKind === 'rocket'
       ? '发射'
+      : weaponKind === 'grenade'
+      ? '投雷'
       : '拳';
 
   const AttackIcon =
@@ -286,6 +288,8 @@ export function VirtualGamepadAbxy({
       ? Crosshair
       : weaponKind === 'rocket'
       ? Rocket
+      : weaponKind === 'grenade'
+      ? Bomb
       : Hand;
 
   const buttons: Array<{

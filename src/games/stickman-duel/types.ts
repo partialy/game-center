@@ -15,18 +15,25 @@ export type StickmanMapTemplate =
   | 'sky_platforms'
   | 'fortress_bunkers';
 
-export type StickWeaponKind = 'sword' | 'pistol' | 'shotgun' | 'rocket';
+export type StickWeaponKind = 'sword' | 'pistol' | 'shotgun' | 'rocket' | 'grenade';
 export type StickPickupKind = StickWeaponKind | 'medkit';
 export type StickmanDropSpawnMode = 'random' | 'center';
 
 export interface HeldWeaponState {
   kind: StickWeaponKind;
-  /** 剑=剩余耐久(默认5，命中敌人-1)；枪=剩余子弹(初始3)；猎枪=剩余子弹(初始2)；火箭筒=剩余火箭(初始1) */
+  /** 剑=剩余耐久(默认5，命中或斩弹-1)；枪=剩余子弹(初始3)；猎枪=剩余子弹(初始2)；火箭筒=剩余火箭(初始1)；碎片手雷=剩余颗数(初始2) */
   remaining: number;
   max: number;
 }
 
-export type FighterAttackKind = 'punch' | 'kick' | 'sword' | 'pistol' | 'shotgun' | 'rocket';
+export type FighterAttackKind =
+  | 'punch'
+  | 'kick'
+  | 'sword'
+  | 'pistol'
+  | 'shotgun'
+  | 'rocket'
+  | 'grenade';
 
 export interface FighterAttackState {
   kind: FighterAttackKind;
@@ -83,6 +90,8 @@ export interface StickFighter {
   invulnTimer: number;
   /** 同一次散弹齐射 ID（允许同一发猎枪的 3 枚小弹同时命中，不与受伤无敌期冲突） */
   lastHitVolleyId: number | null;
+  /** 后坐力短时滑移缓冲（防止地面高摩擦瞬间吞掉猎枪后退位移） */
+  recoilTimer: number;
   swapCooldown: number;
   attackCooldown: number;
   comboStep: number;
@@ -120,11 +129,14 @@ export interface GroundPickup {
 
 export interface StickProjectile {
   id: number;
-  kind: 'pistol' | 'shotgun' | 'rocket';
+  kind: 'pistol' | 'shotgun' | 'rocket' | 'grenade' | 'shrapnel';
   /** 猎枪单发齐射编号，用于同一发多枚弹丸的伤害结算 */
   volleyId?: number;
   ownerSlotId: PlayerSlotId;
   colorHex: string;
+  /** 发射点坐标（用于猎枪散弹从枪口到散开点的半透明轨迹绘制） */
+  originX: number;
+  originY: number;
   x: number;
   y: number;
   prevX: number;
@@ -138,6 +150,17 @@ export interface StickProjectile {
   age: number;
   maxAge: number;
   blastRadius: number;
+}
+
+export interface ProjectileTrailEffect {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  width: number;
+  age: number;
+  maxAge: number;
 }
 
 export interface CombatParticle {
@@ -244,11 +267,17 @@ export interface StickmanDuelRules extends Record<string, unknown> {
   rocketSpeed: number;
   rocketGravity: number;
   rocketBlastRadius: number;
+  grenadeAmmo: number;
+  grenadeDamage: number;
+  grenadeSpeed: number;
+  grenadeGravity: number;
+  grenadeShrapnelMultiplier: number;
   medkitHealPercent: number;
   enableSword: boolean;
   enablePistol: boolean;
   enableShotgun: boolean;
   enableRocket: boolean;
+  enableGrenade: boolean;
   enableMedkit: boolean;
 }
 
@@ -265,6 +294,7 @@ export interface StickmanWorld {
   fighters: StickFighter[];
   pickups: GroundPickup[];
   projectiles: StickProjectile[];
+  projectileTrails: ProjectileTrailEffect[];
   particles: CombatParticle[];
   slashes: SlashEffect[];
   explosions: ExplosionEffect[];

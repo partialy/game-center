@@ -104,6 +104,7 @@ export function getDefaultStickmanRules(): StickmanDuelRules {
     enablePistol: true,
     enableShotgun: true,
     enableRocket: true,
+    enableGrenade: true,
     enableMedkit: true,
 
     // 武器与道具数值（items）
@@ -122,6 +123,11 @@ export function getDefaultStickmanRules(): StickmanDuelRules {
     rocketSpeed: 540,
     rocketGravity: 560,
     rocketBlastRadius: 118,
+    grenadeAmmo: 2,
+    grenadeDamage: 30,
+    grenadeSpeed: 520,
+    grenadeGravity: 920,
+    grenadeShrapnelMultiplier: 0.3,
     medkitHealPercent: 25,
   };
 }
@@ -214,6 +220,7 @@ export const STICKMAN_RULE_FIELDS: RuleFieldSchema[] = [
   { key: 'enablePistol', group: 'drops', label: '启用 手枪', type: 'boolean' },
   { key: 'enableShotgun', group: 'drops', label: '启用 猎枪', type: 'boolean' },
   { key: 'enableRocket', group: 'drops', label: '启用 火箭筒', type: 'boolean' },
+  { key: 'enableGrenade', group: 'drops', label: '启用 碎片手雷', type: 'boolean' },
   { key: 'enableMedkit', group: 'drops', label: '启用 血包', type: 'boolean' },
 
   // 武器与血包数值（items）
@@ -232,6 +239,11 @@ export const STICKMAN_RULE_FIELDS: RuleFieldSchema[] = [
   { key: 'rocketBlastRadius', group: 'items', label: '火箭爆炸半径', type: 'integer', min: 60, max: 200, step: 6, unit: 'px' },
   { key: 'rocketSpeed', group: 'items', label: '火箭弹初速度', type: 'integer', min: 300, max: 900, step: 20, unit: 'px/s' },
   { key: 'rocketGravity', group: 'items', label: '火箭弹重力', type: 'integer', min: 150, max: 1200, step: 30, unit: '' },
+  { key: 'grenadeAmmo', group: 'items', label: '碎片手雷备弹数', type: 'integer', min: 1, max: 6, step: 1, unit: '颗' },
+  { key: 'grenadeDamage', group: 'items', label: '手雷小爆破伤害', type: 'integer', min: 10, max: 80, step: 2, unit: '伤' },
+  { key: 'grenadeSpeed', group: 'items', label: '手雷投掷初速', type: 'integer', min: 280, max: 860, step: 20, unit: 'px/s' },
+  { key: 'grenadeGravity', group: 'items', label: '手雷重力下坠', type: 'integer', min: 400, max: 1600, step: 40, unit: '' },
+  { key: 'grenadeShrapnelMultiplier', group: 'items', label: '碎片伤害倍率', type: 'number', min: 0.1, max: 0.8, step: 0.05, unit: '倍' },
   { key: 'medkitHealPercent', group: 'items', label: '血包回复比例', type: 'integer', min: 5, max: 100, step: 5, unit: '%' },
 ];
 
@@ -342,6 +354,7 @@ export function validateStickmanRules(rules: StickmanDuelRules): ValidationIssue
     !rules.enablePistol &&
     !rules.enableShotgun &&
     !rules.enableRocket &&
+    !rules.enableGrenade &&
     !rules.enableMedkit
   ) {
     issues.push({

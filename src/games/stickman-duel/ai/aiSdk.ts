@@ -29,7 +29,7 @@ export interface StickmanObservation {
     onPlatform: boolean;
     jumpsUsed: number;
     maxJumps: number;
-    weapon: { kind: 'sword' | 'pistol' | 'shotgun' | 'rocket'; remaining: number; max: number } | null;
+    weapon: { kind: 'sword' | 'pistol' | 'shotgun' | 'rocket' | 'grenade'; remaining: number; max: number } | null;
     nearbyDropId: number | null;
   } | null;
   opponents: Array<{
@@ -47,7 +47,7 @@ export interface StickmanObservation {
   }>;
   pickups: Array<{
     id: number;
-    kind: 'sword' | 'pistol' | 'shotgun' | 'rocket' | 'medkit';
+    kind: 'sword' | 'pistol' | 'shotgun' | 'rocket' | 'grenade' | 'medkit';
     remaining: number;
     max: number;
     x: number;
@@ -56,7 +56,7 @@ export interface StickmanObservation {
   }>;
   projectiles: Array<{
     id: number;
-    kind: 'pistol' | 'shotgun' | 'rocket';
+    kind: 'pistol' | 'shotgun' | 'rocket' | 'grenade' | 'shrapnel';
     ownerSlotId: string;
     x: number;
     y: number;
@@ -91,6 +91,10 @@ export interface StickmanObservation {
     rocketSpeed: number;
     rocketGravity: number;
     rocketBlastRadius: number;
+    grenadeDamage: number;
+    grenadeSpeed: number;
+    grenadeGravity: number;
+    grenadeShrapnelMultiplier: number;
     medkitHealPercent: number;
   };
 }
@@ -177,16 +181,17 @@ export function createBot(_ctx: { slotId: string; seed: number; random: () => nu
         self.weapon &&
         (self.weapon.kind === 'pistol' ||
           self.weapon.kind === 'shotgun' ||
-          self.weapon.kind === 'rocket')
+          self.weapon.kind === 'rocket' ||
+          self.weapon.kind === 'grenade')
       ) {
-        const maxRange = self.weapon.kind === 'shotgun' ? 360 : 520;
+        const maxRange = self.weapon.kind === 'shotgun' ? 360 : self.weapon.kind === 'grenade' ? 450 : 520;
         if (dist < maxRange) {
           out.moveLeft = target.x < self.x;
           out.moveRight = target.x >= self.x;
-          if (self.weapon.kind === 'rocket' && dist > 190) {
+          if ((self.weapon.kind === 'rocket' || self.weapon.kind === 'grenade') && dist > 180) {
             out.aimUp = true;
           }
-          wantsAttack = dist > (self.weapon.kind === 'rocket' ? 120 : 20);
+          wantsAttack = dist > (self.weapon.kind === 'rocket' ? 120 : self.weapon.kind === 'grenade' ? 60 : 20);
         }
       } else if (dist < 76) {
         if (dist < 52 && Math.abs(target.y - self.y) < 36) {
@@ -311,6 +316,10 @@ export function buildStickmanObservation(
       rocketSpeed: world.rules.rocketSpeed,
       rocketGravity: world.rules.rocketGravity,
       rocketBlastRadius: world.rules.rocketBlastRadius,
+      grenadeDamage: world.rules.grenadeDamage,
+      grenadeSpeed: world.rules.grenadeSpeed,
+      grenadeGravity: world.rules.grenadeGravity,
+      grenadeShrapnelMultiplier: world.rules.grenadeShrapnelMultiplier,
       medkitHealPercent: world.rules.medkitHealPercent,
     },
   };
@@ -324,11 +333,13 @@ export function buildStickmanPromptMarkdown(
     ? `
 ## 当前对局数值
 - 最大生命：\`${rules.maxHp} HP\`，受伤无敌保护 \`${rules.hurtInvulnSeconds}s\`（期间免疫伤害与击退），拳击 \`${rules.punchDamage}\`，踢腿 \`${rules.kickDamage}\`（强击飞）
+- 部位倍率：手枪、猎枪与手雷碎片等直射弹丸命中**头部 \`1.5×\`**、**身体 \`1.0×\`**、**腿脚 \`0.6×\`**
 - 道具刷新：${rules.dropSpawnMode === 'center' ? '固定中间点位上方短距掉落' : '全场随机落点上方短距掉落'}
-- 长剑：耐久 \`${rules.swordDurability}\` 点（命中扣 1 点），单斩 \`${rules.swordDamage}\`
+- 长剑：耐久 \`${rules.swordDurability}\` 点（命中敌人或挥剑「叮」声斩断子弹均扣 1 点；不可斩断火箭弹），单斩 \`${rules.swordDamage}\`
 - 手枪：\`${rules.pistolAmmo}\` 发直线，单发 \`${rules.pistolDamage}\`，弹速 \`${rules.pistolSpeed} px/s\`
-- 猎枪：\`${rules.shotgunAmmo}\` 发，单发在 \`${rules.shotgunSpreadAngleDeg}°\` 扇形内随机散射 \`${rules.shotgunPellets}\` 枚小子弹，单枚 \`${rules.shotgunDamage}\` 伤，弹速 \`${rules.shotgunSpeed} px/s\`
-- 火箭筒：\`${rules.rocketAmmo}\` 发受重力抛射，中心伤害 \`${rules.rocketDamage}\`，爆炸半径 \`${rules.rocketBlastRadius}px\`（可炸毁砖块与短平台）
+- 猎枪：\`${rules.shotgunAmmo}\` 发，单发在 \`${rules.shotgunSpreadAngleDeg}°\` 扇形内随机散射 \`${rules.shotgunPellets}\` 枚小子弹（带后坐力后退位移），单枚 \`${rules.shotgunDamage}\` 伤
+- 火箭筒：\`${rules.rocketAmmo}\` 发受重力抛射，中心伤害 \`${rules.rocketDamage}\`，爆炸半径 \`${rules.rocketBlastRadius}px\`（大范围炸毁砖块与短平台）
+- 碎片手雷：\`${rules.grenadeAmmo}\` 颗，8 方向抛物线投出，碰任何物体立即小爆破（约 1 格范围、基础 \`${rules.grenadeDamage}\` 伤、仅破命中的单个砖块）并向 6 个方向直线射出 \`${rules.grenadeShrapnelMultiplier}×\` 伤害碎片
 - 血包：回复最大生命 \`${rules.medkitHealPercent}%\`
 `
     : '';
@@ -338,10 +349,10 @@ export function buildStickmanPromptMarkdown(
 请编写一个**单文件、无外部依赖**的 TypeScript 或 JavaScript 策略脚本，在 2D 横版可破坏地形格斗竞技场中战胜对手。
 
 ## 1. 核心规则与物理机制
-1. **地形层级**：最底层 \`#\` 为不可破坏基岩，上方 \`B\` 为可被火箭筒炸毁的堆叠砖块，\`=\` 为单向短平台（可自下而上跃过、按 \`aimDown + jump\` 向下穿台，同样可被火箭筒炸毁）。
+1. **地形层级**：最底层 \`#\` 为不可破坏基岩，上方 \`B\` 为可被火箭筒（大范围）或碎片手雷（单砖）炸毁的堆叠砖块，\`=\` 为单向短平台（可自下而上跃过、按 \`aimDown + jump\` 向下穿台）。
 2. **动作键位映射**（返回值布尔映射）：
    - \`moveLeft\` / \`moveRight\` / \`aimUp\` / \`aimDown\`：水平移动与 8 向远程瞄准（静止时水平朝前发射）
-   - \`attack\`（左键/X）：空手出拳，手持武器时挥剑或发射手枪/猎枪/火箭筒
+   - \`attack\`（左键/X）：空手出拳，手持武器时挥剑（可斩断来袭子弹）或发射手枪/猎枪/火箭筒/投掷碎片手雷
    - \`kick\`（上键/Y）：高位飞踢与强力击飞（持武器时同样可用）
    - \`jump\`（下键/A）：跳跃、空中二段跳，配合 \`aimDown\` 向下穿短平台
    - \`swap\`（右键/B）：拾取或替换身边武器（替换后旧武器保留剩余耐久/弹药掉落地面）

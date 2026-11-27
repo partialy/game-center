@@ -116,9 +116,19 @@ class ProceduralAudio {
         this.tone(ctx, now, 'sawtooth', 880 * pitchJitter, 310, 0.11, 0.13);
         this.tone(ctx, now + 0.015, 'triangle', 1320 * pitchJitter, 540, 0.09, 0.09);
         break;
+      case 'stick_sword_clang':
+        // 清脆金属「叮」声：高频基音 + 钢刃泛音余韵
+        this.tone(ctx, now, 'sine', 1920 * pitchJitter, 1840 * pitchJitter, 0.24, 0.17);
+        this.tone(ctx, now, 'triangle', 2960 * pitchJitter, 2810 * pitchJitter, 0.16, 0.11);
+        this.tone(ctx, now, 'sine', 4250 * pitchJitter, 3900 * pitchJitter, 0.065, 0.07);
+        break;
       case 'stick_pistol':
         this.tone(ctx, now, 'square', 460 * pitchJitter, 90, 0.08, 0.18);
         this.noiseBurst(ctx, now, 0.075, 0.16);
+        break;
+      case 'stick_grenade_throw':
+        this.tone(ctx, now, 'triangle', 380 * pitchJitter, 185 * pitchJitter, 0.085, 0.13);
+        this.tone(ctx, now + 0.01, 'sine', 620 * pitchJitter, 420 * pitchJitter, 0.045, 0.07);
         break;
       case 'stick_rocket':
         this.tone(ctx, now, 'sawtooth', 160 * pitchJitter, 280, 0.18, 0.14);

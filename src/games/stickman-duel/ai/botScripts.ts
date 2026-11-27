@@ -27,6 +27,7 @@ interface StickmanBotProfile {
 const WEAPON_RANK: Record<StickWeaponKind, number> = {
   rocket: 3.4,
   shotgun: 3.0,
+  grenade: 2.9,
   sword: 2.8,
   pistol: 2.5,
 };
@@ -136,11 +137,18 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
       self.weapon &&
       (self.weapon.kind === 'pistol' ||
         self.weapon.kind === 'shotgun' ||
-        self.weapon.kind === 'rocket')
+        self.weapon.kind === 'rocket' ||
+        self.weapon.kind === 'grenade')
     ) {
-      // 远程武器维持合适交战距离：火箭远拉、手枪中距、猎枪近中距贴压
+      // 远程武器维持合适交战距离：火箭远拉、手枪/手雷中距、猎枪近中距贴压
       const idealDist =
-        self.weapon.kind === 'rocket' ? 240 : self.weapon.kind === 'shotgun' ? 140 : 190;
+        self.weapon.kind === 'rocket'
+          ? 240
+          : self.weapon.kind === 'shotgun'
+          ? 140
+          : self.weapon.kind === 'grenade'
+          ? 210
+          : 190;
       if (distToEnemy < idealDist - 40) {
         goalX = self.x + (self.x >= target.x ? 140 : -140);
       } else if (distToEnemy > idealDist + 80) {
@@ -235,7 +243,8 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
       self.weapon &&
       (self.weapon.kind === 'pistol' ||
         self.weapon.kind === 'shotgun' ||
-        self.weapon.kind === 'rocket')
+        self.weapon.kind === 'rocket' ||
+        self.weapon.kind === 'grenade')
     ) {
       // 朝向敌人准备 8 向瞄准
       const aimDirX = toEnemyX >= 0 ? 1 : -1;
@@ -259,6 +268,20 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
           if (this.hasReasonableLine(world, self, target, true)) {
             wantsAttack = true;
           }
+        }
+      } else if (self.weapon.kind === 'grenade') {
+        // 碎片手雷：中距离 8 向抛物线扔出，贴太近则先飞踢拉开
+        if (distToEnemy < 56) {
+          if (horizDist < 60 && vertDist < 44) {
+            wantsKick = true;
+          }
+        } else if (distToEnemy < 470) {
+          if (toEnemyY < -36 || (horizDist > 165 && this.profile.rocketLeadSkill > 0.35)) {
+            aimY = -1;
+          } else if (toEnemyY > 70) {
+            aimY = 1;
+          }
+          wantsAttack = true;
         }
       } else if (self.weapon.kind === 'shotgun') {
         // 猎枪 30° 扇形散射：近中距命中率极高，容许稍宽瞄准角
@@ -294,7 +317,7 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
         }
       }
 
-      if (wantsAttack && self.weapon.kind === 'rocket') {
+      if (wantsAttack && (self.weapon.kind === 'rocket' || self.weapon.kind === 'grenade')) {
         intent.moveLeft = aimX < 0;
         intent.moveRight = aimX > 0;
         intent.aimUp = aimY < 0;

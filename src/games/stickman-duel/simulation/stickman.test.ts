@@ -5,6 +5,7 @@ import { DeterministicRng } from '../../tank-battle/map/rng';
 import {
   buildStickmanTerrain,
   CORNER_PLATFORM_SPECS,
+  destroySingleNearestTile,
   destroyTerrainInRadius,
   findValidDropSurface,
   getTile,
@@ -15,7 +16,10 @@ import {
 import { getDefaultStickmanRules, migrateStickmanRules } from '../rules';
 import {
   applyMedkitHeal,
+  computeGrenadeThrowVelocity,
+  isProjectileSlashable,
   resolveEightWayAim,
+  resolveProjectileHitZone,
   swapFighterWeapon,
 } from './combat';
 import { StickmanDuelSession } from './world';
@@ -245,6 +249,8 @@ test('受伤无敌时长（默认 0.1s 可改）：期间免疫近战、手枪�
     y: 552,
     prevX: 440,
     prevY: 552,
+    originX: 400,
+    originY: 552,
     vx: 880,
     vy: 0,
     radius: 4.5,
@@ -265,6 +271,8 @@ test('受伤无敌时长（默认 0.1s 可改）：期间免疫近战、手枪�
     y: (STICKMAN_GRID_ROWS - 1) * STICKMAN_TILE_SIZE - 2,
     prevX: 460,
     prevY: (STICKMAN_GRID_ROWS - 1) * STICKMAN_TILE_SIZE - 8,
+    originX: 460,
+    originY: 420,
     vx: 0,
     vy: 400,
     radius: 7,
@@ -505,3 +513,485 @@ test('猎枪默认 2 发子弹，单发在 30° 扇形内随机射出 3 枚小�
   );
   assert.ok(c2.invulnTimer > 0, '被猎枪命中后仍应触发受伤无敌期以阻挡后续连击');
 });
+
+test('猎枪开火产生明显向后后坐力位移，并记录 3 枚散弹从发射点到散开点的半透明视觉轨迹', () => {
+  const session = createTestSession();
+  const world = session.getWorldState();
+  const [p1, p2] = world.fighters;
+
+  // 在空旷地面测试水平向右开枪
+  const floorY = (STICKMAN_GRID_ROWS - 1) * STICKMAN_TILE_SIZE;
+  for (let c = 4; c <= 18; c += 1) {
+    setTile(world.terrain, c, STICKMAN_GRID_ROWS - 2, 'empty');
+    setTile(world.terrain, c, STICKMAN_GRID_ROWS - 3, 'empty');
+  }
+  p1.x = 360;
+  p1.y = floorY;
+  p1.vx = 0;
+  p1.vy = 0;
+  p1.onGround = true;
+  p1.facing = 1;
+  p1.weapon = { kind: 'shotgun', remaining: 2, max: 2 };
+
+  p2.x = 980;
+  p2.y = floorY;
+
+  const startX = p1.x;
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+
+  let recoilSawNegativeVx = false;
+  let recoilSawTimer = false;
+  let pelletsChecked = false;
+  const seenTrailKeys = new Set<string>();
+  const capturedTrails: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+  for (let i = 0; i < 95; i += 1) {
+    session.step(1 / 60, createStaticInputFrame({}));
+    if (p1.vx < -60) recoilSawNegativeVx = true;
+    if (p1.recoilTimer > 0) recoilSawTimer = true;
+    const pellets = world.projectiles.filter((pr) => pr.kind === 'shotgun');
+    if (pellets.length === 3 && !pelletsChecked) {
+      pelletsChecked = true;
+      for (const pel of pellets) {
+        assert.ok(Number.isFinite(pel.originX) && Number.isFinite(pel.originY), '散弹应记录枪口 originX/originY');
+        assert.ok(pel.x > pel.originX, '向右射击时散弹当前坐标应位于发射点右侧');
+      }
+    }
+    for (const tr of world.projectileTrails) {
+      const key = `${tr.x1.toFixed(1)},${tr.y1.toFixed(1)}->${tr.x2.toFixed(1)},${tr.y2.toFixed(1)}`;
+      if (!seenTrailKeys.has(key)) {
+        seenTrailKeys.add(key);
+        capturedTrails.push({ x1: tr.x1, y1: tr.y1, x2: tr.x2, y2: tr.y2 });
+      }
+    }
+  }
+
+  assert.equal(recoilSawNegativeVx, true, '猎枪开火应产生反向后坐力速度');
+  assert.equal(recoilSawTimer, true, '猎枪开火应激活 recoilTimer 滑动窗口');
+  assert.equal(pelletsChecked, true, '应能观测到 3 枚携带发射点坐标的散弹');
+  assert.ok(
+    p1.x < startX - 8,
+    `猎枪后坐力应让角色产生明显向后位移（期望 < ${startX - 8}，实际 ${p1.x.toFixed(1)}）`
+  );
+  assert.equal(
+    capturedTrails.length,
+    3,
+    `3 枚散弹落点/消散后应累计记录全部 3 条半透明轨迹残影，实际记录 ${capturedTrails.length} 条`
+  );
+  for (const tr of capturedTrails) {
+    assert.ok(Math.hypot(tr.x2 - tr.x1, tr.y2 - tr.y1) > 10, '轨迹应从发射点连向散开点');
+  }
+});
+
+test('长剑挥砍可砍碎手枪/猎枪/手雷碎片并触发「叮」音效与扣 1 耐久，但不可砍火箭筒', () => {
+  assert.equal(isProjectileSlashable('pistol'), true);
+  assert.equal(isProjectileSlashable('shotgun'), true);
+  assert.equal(isProjectileSlashable('shrapnel'), true);
+  assert.equal(isProjectileSlashable('rocket'), false);
+  assert.equal(isProjectileSlashable('grenade'), false);
+
+  const session = createTestSession();
+  const world = session.getWorldState();
+  const [p1, p2] = world.fighters;
+  const floorY = (STICKMAN_GRID_ROWS - 1) * STICKMAN_TILE_SIZE;
+  for (let c = 4; c <= 14; c += 1) {
+    for (let r = 10; r < STICKMAN_GRID_ROWS - 1; r += 1) {
+      setTile(world.terrain, c, r, 'empty');
+    }
+  }
+  p1.x = 300;
+  p1.y = floorY;
+  p1.facing = 1;
+  p1.weapon = { kind: 'sword', remaining: 5, max: 5 };
+  p2.x = 920;
+  p2.y = floorY;
+
+  // 在 p1 挥剑弧线前方放置手枪子弹与 1 枚火箭弹
+  const chestY = p1.y - p1.height * 0.54;
+  world.projectiles.push(
+    {
+      id: 1001,
+      kind: 'pistol',
+      ownerSlotId: 'p2',
+      colorHex: '#2F74E0',
+      x: p1.x + 56,
+      y: chestY,
+      prevX: p1.x + 70,
+      prevY: chestY,
+      originX: p2.x,
+      originY: chestY,
+      vx: -180,
+      vy: 0,
+      radius: 4.5,
+      damage: 25,
+      knockback: 265,
+      gravityScale: 0,
+      age: 0.2,
+      maxAge: 2,
+      blastRadius: 0,
+    },
+    {
+      id: 1002,
+      kind: 'rocket',
+      ownerSlotId: 'p2',
+      colorHex: '#2F74E0',
+      x: p1.x + 54,
+      y: chestY - 8,
+      prevX: p1.x + 68,
+      prevY: chestY - 8,
+      originX: p2.x,
+      originY: chestY - 8,
+      vx: -140,
+      vy: 0,
+      radius: 7,
+      damage: 45,
+      knockback: 640,
+      gravityScale: 0,
+      age: 0.2,
+      maxAge: 3,
+      blastRadius: 110,
+    }
+  );
+
+  // 触发挥剑，收集音效事件
+  const allSounds: string[] = [];
+  const firstStep = session.step(
+    1 / 60,
+    createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } })
+  );
+  allSounds.push(...firstStep.sounds);
+  for (let i = 0; i < 8; i += 1) {
+    world.hitstopTimer = 0;
+    const res = session.step(1 / 60, createStaticInputFrame({}));
+    allSounds.push(...res.sounds);
+  }
+
+  assert.equal(
+    world.projectiles.some((pr) => pr.id === 1001),
+    false,
+    '手枪子弹应在挥剑判定窗内被砍碎'
+  );
+  assert.ok(
+    allSounds.includes('stick_sword_clang'),
+    `砍碎子弹应播放金属「叮」(stick_sword_clang) 音效，实际音效：${allSounds.join(',')}`
+  );
+  assert.equal(p1.weapon?.remaining, 4, '砍碎 1 枚子弹应扣除长剑 1 点耐久（5 -> 4）');
+  assert.ok(
+    world.floatingTexts.some((ft) => ft.text === '叮!'),
+    '砍碎子弹应生成「叮!」飘字反馈'
+  );
+
+  // 验证火箭弹绝不会被长剑砍碎
+  const rocketSlashSession = createTestSession();
+  const rw = rocketSlashSession.getWorldState();
+  for (let c = 4; c <= 14; c += 1) {
+    for (let r = 10; r < STICKMAN_GRID_ROWS - 1; r += 1) {
+      setTile(rw.terrain, c, r, 'empty');
+    }
+  }
+  const [rp1, rp2] = rw.fighters;
+  rp1.x = 300;
+  rp1.y = floorY;
+  rp1.facing = 1;
+  rp1.weapon = { kind: 'sword', remaining: 5, max: 5 };
+  rp2.x = 920;
+  rp2.y = floorY;
+  rw.projectiles.push({
+    id: 2001,
+    kind: 'rocket',
+    ownerSlotId: 'p2',
+    colorHex: '#2F74E0',
+    x: rp1.x + 62,
+    y: rp1.y - rp1.height * 0.54,
+    prevX: rp1.x + 70,
+    prevY: rp1.y - rp1.height * 0.54,
+    originX: rp2.x,
+    originY: rp1.y - rp1.height * 0.54,
+    vx: -40,
+    vy: 0,
+    radius: 7,
+    damage: 45,
+    knockback: 640,
+    gravityScale: 0,
+    age: 0.2,
+    maxAge: 3,
+    blastRadius: 110,
+  });
+  const rocketSounds: string[] = [];
+  rocketSounds.push(
+    ...rocketSlashSession
+      .step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }))
+      .sounds
+  );
+  for (let i = 0; i < 6; i += 1) {
+    rocketSounds.push(...rocketSlashSession.step(1 / 60, createStaticInputFrame({})).sounds);
+  }
+  assert.equal(
+    rw.projectiles.some((pr) => pr.id === 2001),
+    true,
+    '火箭弹不应被长剑砍碎，应继续飞行'
+  );
+  assert.equal(rocketSounds.includes('stick_sword_clang'), false, '对火箭弹挥剑不应触发砍弹音效');
+  assert.equal(rp1.weapon?.remaining, 5, '未砍掉火箭弹不应扣除长剑耐久');
+
+  // 耐久剩 1 时砍掉手雷碎片应碎裂清空武器槽
+  rp1.attack = null;
+  rp1.attackCooldown = 0;
+  rp1.weapon = { kind: 'sword', remaining: 1, max: 5 };
+  rw.projectiles.length = 0;
+  rw.projectiles.push({
+    id: 2002,
+    kind: 'shrapnel',
+    ownerSlotId: 'p2',
+    colorHex: '#84CC16',
+    x: rp1.x + 54,
+    y: rp1.y - rp1.height * 0.54,
+    prevX: rp1.x + 64,
+    prevY: rp1.y - rp1.height * 0.54,
+    originX: rp1.x + 120,
+    originY: rp1.y - rp1.height * 0.54,
+    vx: -120,
+    vy: 0,
+    radius: 3.6,
+    damage: 9,
+    knockback: 135,
+    gravityScale: 0,
+    age: 0.1,
+    maxAge: 1,
+    blastRadius: 0,
+  });
+  rocketSlashSession.step(
+    1 / 60,
+    createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } })
+  );
+  for (let i = 0; i < 8; i += 1) {
+    rw.hitstopTimer = 0;
+    rocketSlashSession.step(1 / 60, createStaticInputFrame({}));
+  }
+  assert.equal(rw.projectiles.some((pr) => pr.id === 2002), false, '手雷碎片应可被长剑砍碎');
+  assert.equal(rp1.weapon, null, '长剑剩 1 耐久砍碎弹丸后应自动碎裂清空');
+});
+
+test('全部直射弹丸（手枪、猎枪、手雷碎片）按部位判定：头部 1.5x、身体 1.0x、腿脚 0.6x', () => {
+  // 纯函数校验
+  const feetY = 500;
+  const height = 56; // top = 444
+  assert.deepEqual(resolveProjectileHitZone(444 + 6, feetY, height), {
+    zone: 'head',
+    multiplier: 1.5,
+  });
+  assert.deepEqual(resolveProjectileHitZone(444 + 28, feetY, height), {
+    zone: 'body',
+    multiplier: 1.0,
+  });
+  assert.deepEqual(resolveProjectileHitZone(444 + 48, feetY, height), {
+    zone: 'legs',
+    multiplier: 0.6,
+  });
+
+  // 实战验证手枪、猎枪、手雷碎片分别命中头 / 身 / 脚
+  const cases: Array<{
+    kind: 'pistol' | 'shotgun' | 'shrapnel';
+    baseDamage: number;
+    relY: number;
+    expectedDamage: number;
+    label: string;
+  }> = [
+    { kind: 'pistol', baseDamage: 20, relY: 0.12, expectedDamage: 30, label: '手枪爆头 1.5x' },
+    { kind: 'pistol', baseDamage: 20, relY: 0.5, expectedDamage: 20, label: '手枪打身 1.0x' },
+    { kind: 'pistol', baseDamage: 20, relY: 0.88, expectedDamage: 12, label: '手枪打脚 0.6x' },
+    { kind: 'shotgun', baseDamage: 10, relY: 0.12, expectedDamage: 15, label: '猎枪爆头 1.5x' },
+    { kind: 'shotgun', baseDamage: 10, relY: 0.88, expectedDamage: 6, label: '猎枪打脚 0.6x' },
+    { kind: 'shrapnel', baseDamage: 10, relY: 0.12, expectedDamage: 15, label: '手雷碎片爆头 1.5x' },
+    { kind: 'shrapnel', baseDamage: 10, relY: 0.88, expectedDamage: 6, label: '手雷碎片打脚 0.6x' },
+  ];
+
+  for (const tc of cases) {
+    const session = createTestSession({ maxHp: 200, hurtInvulnSeconds: 0 });
+    const world = session.getWorldState();
+    const floorY = (STICKMAN_GRID_ROWS - 1) * STICKMAN_TILE_SIZE;
+    // 清空测试区域砖块，防止子弹在命中目标前先撞墙
+    for (let c = 3; c <= 18; c += 1) {
+      for (let r = 10; r < STICKMAN_GRID_ROWS - 1; r += 1) {
+        setTile(world.terrain, c, r, 'empty');
+      }
+    }
+    const [p1, p2] = world.fighters;
+    p1.x = 180;
+    p1.y = floorY;
+    p1.onGround = true;
+    p2.x = 500;
+    p2.y = floorY;
+    p2.vx = 0;
+    p2.vy = 0;
+    p2.onGround = true;
+    p2.hp = 200;
+    p2.invulnTimer = 0;
+
+    const hitY = p2.y - p2.height + p2.height * tc.relY;
+    world.projectiles.push({
+      id: 3000,
+      kind: tc.kind,
+      ownerSlotId: 'p1',
+      colorHex: '#E04B32',
+      x: p2.x - 4,
+      y: hitY,
+      prevX: p2.x - 16,
+      prevY: hitY,
+      originX: p1.x,
+      originY: hitY,
+      vx: 600,
+      vy: 0,
+      radius: 4,
+      damage: tc.baseDamage,
+      knockback: 180,
+      gravityScale: 0,
+      age: 0.1,
+      maxAge: 2,
+      blastRadius: 0,
+    });
+
+    session.step(1 / 60, createStaticInputFrame({}));
+    assert.equal(
+      200 - p2.hp,
+      tc.expectedDamage,
+      `${tc.label} 期望扣血 ${tc.expectedDamage}，实际扣血 ${200 - p2.hp}`
+    );
+    if (tc.relY < 0.28) {
+      assert.ok(
+        world.floatingTexts.some((ft) => ft.text.startsWith('爆头')),
+        `${tc.label} 应显示「爆头」暴击飘字`
+      );
+    }
+  }
+});
+
+test('碎片手雷默认 2 颗，8 方向抛物线投掷，碰物触发约一格小爆破（仅炸毁命中的单个砖块）并向 6 方向射出 0.3x 直线碎片', () => {
+  const defaults = getDefaultStickmanRules();
+  assert.equal(defaults.enableGrenade, true);
+  assert.equal(defaults.grenadeAmmo, 2);
+  assert.equal(defaults.grenadeDamage, 30);
+  assert.equal(defaults.grenadeShrapnelMultiplier, 0.3);
+
+  // 验证 8 方向抛物线初速计算
+  const horiz = computeGrenadeThrowVelocity(1, 0, 520);
+  assert.ok(horiz.vx > 300, '水平投掷应有明显前向速度');
+  assert.ok(horiz.vy < -100, '水平投掷应自带轻微上抛弧线');
+  const upRight = computeGrenadeThrowVelocity(Math.SQRT1_2, -Math.SQRT1_2, 520);
+  assert.ok(upRight.vx > 200 && upRight.vy < -250, '斜上方投掷应呈高抛弧线');
+
+  // 验证单砖爆破工具绝不破坏基岩且至多炸毁 1 个砖块
+  const t = buildStickmanTerrain('twin_towers', 123, 2);
+  setTile(t, 12, 14, 'brick');
+  setTile(t, 13, 14, 'brick');
+  setTile(t, 12, 15, 'brick');
+  setTile(t, 13, 15, 'brick');
+  const hitOne = destroySingleNearestTile(
+    t,
+    12.4 * STICKMAN_TILE_SIZE,
+    14.4 * STICKMAN_TILE_SIZE,
+    42
+  );
+  assert.ok(hitOne !== null, '碎片手雷小爆破应炸毁命中的单个砖块');
+  assert.equal(hitOne.col, 12);
+  assert.equal(hitOne.row, 14);
+  assert.equal(getTile(t, 12, 14), 'empty');
+  assert.equal(getTile(t, 13, 14), 'brick', '相邻砖块不应被一并炸毁');
+  assert.equal(getTile(t, 12, 15), 'brick', '下方砖块不应被一并炸毁');
+
+  // 基岩不可破坏（清空上方紧邻空域后直接炸基岩）
+  setTile(t, 11, STICKMAN_GRID_ROWS - 2, 'empty');
+  setTile(t, 12, STICKMAN_GRID_ROWS - 2, 'empty');
+  setTile(t, 13, STICKMAN_GRID_ROWS - 2, 'empty');
+  const hitBedrock = destroySingleNearestTile(
+    t,
+    12.5 * STICKMAN_TILE_SIZE,
+    (STICKMAN_GRID_ROWS - 0.5) * STICKMAN_TILE_SIZE,
+    42
+  );
+  assert.equal(hitBedrock, null, '碎片手雷不可破坏最底层基岩');
+  assert.equal(getTile(t, 12, STICKMAN_GRID_ROWS - 1), 'bedrock');
+
+  // 实战投掷与触碰砖块引爆测试
+  const session = createTestSession({ maxHp: 200 });
+  const world = session.getWorldState();
+  const [p1, p2] = world.fighters;
+  const floorY = (STICKMAN_GRID_ROWS - 1) * STICKMAN_TILE_SIZE;
+
+  // 清空中央区域并摆放一个 2×2 砖块簇作为目标墙
+  for (let c = 6; c <= 20; c += 1) {
+    for (let r = 8; r < STICKMAN_GRID_ROWS - 1; r += 1) {
+      setTile(world.terrain, c, r, 'empty');
+    }
+  }
+  setTile(world.terrain, 14, 15, 'brick');
+  setTile(world.terrain, 15, 15, 'brick');
+  setTile(world.terrain, 14, 16, 'brick');
+  setTile(world.terrain, 15, 16, 'brick');
+
+  p1.x = 10 * STICKMAN_TILE_SIZE;
+  p1.y = floorY;
+  p1.facing = 1;
+  p1.weapon = { kind: 'grenade', remaining: 2, max: 2 };
+
+  // 将 p2 摆在远处（距爆点 > 160px），验证小爆破本身不波及远处角色
+  p2.x = 20 * STICKMAN_TILE_SIZE;
+  p2.y = floorY;
+  p2.hp = 200;
+
+  // 投掷第一颗手雷
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  let sawGrenadeFalling = false;
+  let prevVy = -Infinity;
+  let shrapnels: typeof world.projectiles = [];
+
+  for (let i = 0; i < 60; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({}));
+    const g = world.projectiles.find((pr) => pr.kind === 'grenade');
+    if (g) {
+      if (g.vy > prevVy) sawGrenadeFalling = true;
+      prevVy = g.vy;
+    }
+    const foundShrapnel = world.projectiles.filter((pr) => pr.kind === 'shrapnel');
+    if (foundShrapnel.length > 0) {
+      shrapnels = [...foundShrapnel];
+      break;
+    }
+  }
+
+  assert.equal(p1.weapon?.remaining, 1, '投出 1 颗碎片手雷后应剩余 1 颗（2 -> 1）');
+  assert.equal(sawGrenadeFalling, true, '碎片手雷飞行过程应受重力呈抛物线运动');
+  assert.equal(shrapnels.length, 6, '碎片手雷触碰物体爆破后应向 6 个方向射出 6 枚碎片');
+
+  const expectedShrapnelDmg = Math.max(
+    1,
+    Math.round(defaults.grenadeDamage * defaults.grenadeShrapnelMultiplier)
+  );
+  const angles = shrapnels
+    .map((s) => {
+      assert.equal(s.gravityScale, 0, '碎片应沿直线射出，不受重力影响');
+      assert.equal(s.damage, expectedShrapnelDmg, `碎片单枚伤害应为 0.3x (${expectedShrapnelDmg})`);
+      return ((Math.atan2(s.vy, s.vx) * 180) / Math.PI + 360) % 360;
+    })
+    .sort((a, b) => a - b);
+
+  for (let i = 0; i < 6; i += 1) {
+    const next = i < 5 ? angles[i + 1] : angles[0] + 360;
+    const diff = next - angles[i];
+    assert.ok(
+      Math.abs(diff - 60) < 1.5,
+      `6 枚碎片应均匀分布在 6 个方向（间隔 60°），实际间隔 ${diff.toFixed(2)}°`
+    );
+  }
+
+  // 核对 2x2 砖块簇中恰好有 1 块被炸毁，其余 3 块完好
+  const remainingBricks = [
+    getTile(world.terrain, 14, 15),
+    getTile(world.terrain, 15, 15),
+    getTile(world.terrain, 14, 16),
+    getTile(world.terrain, 15, 16),
+  ].filter((tile) => tile === 'brick').length;
+  assert.equal(remainingBricks, 3, '碎片手雷小爆破应仅炸毁命中的单个砖块（4 -> 3）');
+  assert.equal(p2.hp, 200, '碎片手雷一格小爆破不应波及远处角色');
+});
+

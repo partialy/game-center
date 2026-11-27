@@ -376,6 +376,71 @@ export function destroyTerrainInRadius(
   return destroyed;
 }
 
+/**
+ * 碎片手雷小爆破单格地形破坏：
+ * - 仅炸毁距离爆心最近且在约 1 格方框范围内的单个可破坏砖块或短平台
+ * - 永远不会破坏最底层基岩（bedrock），也不会像火箭筒一样大面积拆墙
+ */
+export function destroySingleNearestTile(
+  terrain: StickmanTerrain,
+  cx: number,
+  cy: number,
+  maxRadius = 42
+): DestroyedTileInfo | null {
+  const ts = terrain.tileSize;
+  const hitCol = Math.floor(cx / ts);
+  const hitRow = Math.floor(cy / ts);
+
+  // 若爆心正好落在某块可破坏砖块/短平台格内，直接摧毁这一格
+  if (hitRow >= 0 && hitRow <= terrain.rows - 2 && hitCol >= 0 && hitCol < terrain.cols) {
+    const directTile = getTile(terrain, hitCol, hitRow);
+    if (directTile === 'brick' || directTile === 'platform') {
+      setTile(terrain, hitCol, hitRow, 'empty');
+      return {
+        col: hitCol,
+        row: hitRow,
+        x: (hitCol + 0.5) * ts,
+        y: (hitRow + 0.5) * ts,
+        kind: directTile,
+      };
+    }
+  }
+
+  // 否则在 1 格方框紧邻范围内寻找距离爆心最近的单个可破坏格子
+  const minCol = Math.max(0, Math.floor((cx - maxRadius) / ts));
+  const maxCol = Math.min(terrain.cols - 1, Math.floor((cx + maxRadius) / ts));
+  const minRow = Math.max(0, Math.floor((cy - maxRadius) / ts));
+  const maxRow = Math.min(terrain.rows - 2, Math.floor((cy + maxRadius) / ts));
+
+  let best: { col: number; row: number; x: number; y: number; kind: 'brick' | 'platform'; distSq: number } | null = null;
+  const maxSq = maxRadius * maxRadius;
+
+  for (let r = minRow; r <= maxRow; r += 1) {
+    for (let c = minCol; c <= maxCol; c += 1) {
+      const tile = getTile(terrain, c, r);
+      if (tile !== 'brick' && tile !== 'platform') continue;
+      const tx = (c + 0.5) * ts;
+      const ty = (r + 0.5) * ts;
+      const dx = tx - cx;
+      const dy = ty - cy;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= maxSq && (!best || distSq < best.distSq)) {
+        best = { col: c, row: r, x: tx, y: ty, kind: tile, distSq };
+      }
+    }
+  }
+
+  if (!best) return null;
+  setTile(terrain, best.col, best.row, 'empty');
+  return {
+    col: best.col,
+    row: best.row,
+    x: best.x,
+    y: best.y,
+    kind: best.kind,
+  };
+}
+
 export interface BodyPhysicsState {
   x: number;
   y: number;

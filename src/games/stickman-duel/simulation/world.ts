@@ -14,6 +14,7 @@ import type {
 import { DeterministicRng } from '../../tank-battle/map/rng';
 import {
   buildStickmanTerrain,
+  destroySingleNearestTile,
   destroyTerrainInRadius,
   findValidDropSurface,
   moveBodyWithTerrain,
@@ -29,6 +30,7 @@ import type {
   GroundPickup,
   StickFighter,
   StickPickupKind,
+  StickProjectile,
   StickmanDuelRules,
   StickmanWorld,
 } from '../types';
@@ -36,10 +38,14 @@ import {
   PICKUP_ACCENTS,
   PICKUP_LABELS,
   applyMedkitHeal,
+  computeGrenadeThrowVelocity,
   computeRocketSplash,
   getWeaponMaxCharges,
+  isProjectileSlashable,
   resolveEightWayAim,
+  resolveProjectileHitZone,
   swapFighterWeapon,
+  type ProjectileHitZone,
 } from './combat';
 
 const FIGHTER_HALF_WIDTH = 13;
@@ -49,6 +55,7 @@ const JUMP_BUFFER_SECONDS = 0.095;
 const DROP_THROUGH_SECONDS = 0.19;
 const PICKUP_INTERACT_RADIUS = 56;
 const PICKUP_DROP_OFFSET_Y = 46;
+const GRENADE_BLAST_RADIUS = 38;
 const ROUND_OVER_BANNER_SECONDS = 2.1;
 
 function createEmptyStats(): PlayerMatchStats {
@@ -104,6 +111,7 @@ function createFighter(
     hitFlashTimer: 0,
     invulnTimer: 0,
     lastHitVolleyId: null,
+    recoilTimer: 0,
     swapCooldown: 0,
     attackCooldown: 0,
     comboStep: 0,
@@ -171,6 +179,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       fighters: this.spawnFightersForTerrain(initialTerrain, 1),
       pickups: [],
       projectiles: [],
+      projectileTrails: [],
       particles: [],
       slashes: [],
       explosions: [],
@@ -261,12 +270,13 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     this.spawnPickupByMode(kind, 32);
   }
 
-  private getEnabledWeaponKinds(): Array<'sword' | 'pistol' | 'shotgun' | 'rocket'> {
-    const out: Array<'sword' | 'pistol' | 'shotgun' | 'rocket'> = [];
+  private getEnabledWeaponKinds(): Array<'sword' | 'pistol' | 'shotgun' | 'rocket' | 'grenade'> {
+    const out: Array<'sword' | 'pistol' | 'shotgun' | 'rocket' | 'grenade'> = [];
     if (this.rules.enableSword) out.push('sword');
     if (this.rules.enablePistol) out.push('pistol');
     if (this.rules.enableShotgun) out.push('shotgun');
     if (this.rules.enableRocket) out.push('rocket');
+    if (this.rules.enableGrenade) out.push('grenade');
     return out;
   }
 
@@ -275,6 +285,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     if (this.rules.enableSword) out.push('sword', 'sword');
     if (this.rules.enablePistol) out.push('pistol', 'pistol');
     if (this.rules.enableShotgun) out.push('shotgun', 'shotgun');
+    if (this.rules.enableGrenade) out.push('grenade', 'grenade');
     if (this.rules.enableRocket) out.push('rocket');
     if (this.rules.enableMedkit) out.push('medkit');
     return out;
@@ -494,6 +505,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     if (f.invulnTimer <= 0) {
       f.lastHitVolleyId = null;
     }
+    f.recoilTimer = Math.max(0, f.recoilTimer - dt);
     f.swapCooldown = Math.max(0, f.swapCooldown - dt);
     f.attackCooldown = Math.max(0, f.attackCooldown - dt);
     f.dropThroughTimer = Math.max(0, f.dropThroughTimer - dt);
@@ -542,18 +554,25 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     f.aimX = aim.x;
     f.aimY = aim.y;
 
-    // 2. 水平速度控制
+    // 2. 水平速度控制（含猎枪后坐力滑移窗口，确保后退位移清晰可感）
     if (!inHitStun) {
-      const targetVx = Math.abs(dirX) > 0.14 ? Math.sign(dirX) * Math.min(1, Math.abs(dirX) * 1.15) * this.rules.moveSpeed : 0;
-      const accel = f.onGround ? 2400 : 1450;
-      const maxDelta = accel * dt;
-      const diff = targetVx - f.vx;
-      if (Math.abs(diff) <= maxDelta) {
-        f.vx = targetVx;
+      const hasMoveInput = Math.abs(dirX) > 0.14;
+      const targetVx = hasMoveInput
+        ? Math.sign(dirX) * Math.min(1, Math.abs(dirX) * 1.15) * this.rules.moveSpeed
+        : 0;
+      if (f.recoilTimer > 0 && !hasMoveInput) {
+        f.vx *= Math.pow(0.06, dt);
       } else {
-        f.vx += Math.sign(diff) * maxDelta;
+        const accel = f.recoilTimer > 0 ? 540 : f.onGround ? 2400 : 1450;
+        const maxDelta = accel * dt;
+        const diff = targetVx - f.vx;
+        if (Math.abs(diff) <= maxDelta) {
+          f.vx = targetVx;
+        } else {
+          f.vx += Math.sign(diff) * maxDelta;
+        }
       }
-      if (f.onGround && Math.abs(f.vx) > 25) {
+      if (f.onGround && Math.abs(f.vx) > 25 && f.recoilTimer <= 0) {
         f.runPhase += Math.abs(f.vx) * dt * 0.055;
       }
     } else {
@@ -770,6 +789,19 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         comboStep: 0,
         projectileFired: false,
       };
+    } else if (kind === 'grenade') {
+      f.attack = {
+        kind: 'grenade',
+        elapsed: 0,
+        totalDuration: 0.3,
+        startup: 0.05,
+        activeEnd: 0.12,
+        aimX,
+        aimY,
+        hitSlotIds: [],
+        comboStep: 0,
+        projectileFired: false,
+      };
     }
   }
 
@@ -784,7 +816,10 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
 
     // 远程武器在 startup 时刻发射
     if (
-      (atk.kind === 'pistol' || atk.kind === 'shotgun' || atk.kind === 'rocket') &&
+      (atk.kind === 'pistol' ||
+        atk.kind === 'shotgun' ||
+        atk.kind === 'rocket' ||
+        atk.kind === 'grenade') &&
       !atk.projectileFired &&
       atk.elapsed >= atk.startup
     ) {
@@ -803,9 +838,69 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       const hitCenterX = f.x + f.facing * (reach * 0.56);
       const hitCenterY = f.y - f.height * (atk.kind === 'kick' ? 0.44 : 0.58);
 
+      // 长剑斩弹：挥剑可砍碎手枪/猎枪/手雷碎片等子弹（火箭筒不可砍），发出「叮」声并扣 1 耐久
+      if (atk.kind === 'sword' && f.weapon?.kind === 'sword' && f.weapon.remaining > 0) {
+        const slashHalfW = reach * 0.62;
+        const slashHalfH = heightReach * 0.62;
+        for (let pi = this.world.projectiles.length - 1; pi >= 0; pi -= 1) {
+          if (!f.weapon || f.weapon.kind !== 'sword' || f.weapon.remaining <= 0) break;
+          const proj = this.world.projectiles[pi];
+          if (!isProjectileSlashable(proj.kind)) continue;
+          if (proj.ownerSlotId === f.slotId && proj.age < 0.08) continue;
+
+          const midX = (proj.prevX + proj.x) * 0.5;
+          const midY = (proj.prevY + proj.y) * 0.5;
+          const hitNow =
+            Math.abs(proj.x - hitCenterX) <= slashHalfW + proj.radius &&
+            Math.abs(proj.y - hitCenterY) <= slashHalfH + proj.radius;
+          const hitMid =
+            Math.abs(midX - hitCenterX) <= slashHalfW + proj.radius &&
+            Math.abs(midY - hitCenterY) <= slashHalfH + proj.radius;
+          if (!hitNow && !hitMid) continue;
+
+          if (proj.kind === 'shotgun') {
+            this.world.projectileTrails.push({
+              x1: proj.originX,
+              y1: proj.originY,
+              x2: proj.x,
+              y2: proj.y,
+              color: '#FB923C',
+              width: 3.0,
+              age: 0,
+              maxAge: 0.24,
+            });
+          }
+          this.world.projectiles.splice(pi, 1);
+
+          sounds.push('stick_sword_clang');
+          this.spawnSparkBurst(proj.x, proj.y, -Math.sign(proj.vx || f.facing), -0.35, 11, '#E0F2FE');
+          this.spawnSparkBurst(proj.x, proj.y, f.facing, -0.5, 6, '#FDE047');
+          this.world.floatingTexts.push({
+            x: proj.x,
+            y: proj.y - 12,
+            vy: -56,
+            text: '叮!',
+            color: '#38BDF8',
+            scale: 1.08,
+            age: 0,
+            maxAge: 0.62,
+          });
+          this.world.hitstopTimer = Math.max(this.world.hitstopTimer, 0.032);
+          this.addShake(3.2, f.facing, -0.2);
+
+          const slashStats = this.world.stats[f.slotId];
+          if (slashStats) {
+            slashStats.itemsUsed += 1;
+            slashStats.itemUsageByKind.sword = (slashStats.itemUsageByKind.sword ?? 0) + 1;
+          }
+          this.consumeSwordDurability(f, f.facing);
+        }
+      }
+
       for (const target of this.world.fighters) {
         if (target.slotId === f.slotId || !target.alive || target.invulnTimer > 0) continue;
         if (atk.hitSlotIds.includes(target.slotId)) continue;
+        if (atk.kind === 'sword' && (!f.weapon || f.weapon.kind !== 'sword')) break;
 
         const targetCenterY = target.y - target.height * 0.5;
         const dx = Math.abs(target.x - hitCenterX);
@@ -823,9 +918,35 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     }
   }
 
+  private consumeSwordDurability(attacker: StickFighter, dir: -1 | 1): void {
+    if (!attacker.weapon || attacker.weapon.kind !== 'sword') return;
+    attacker.weapon.remaining -= 1;
+    if (attacker.weapon.remaining <= 0) {
+      this.spawnSparkBurst(
+        attacker.x + dir * 30,
+        attacker.y - attacker.height * 0.55,
+        dir,
+        -0.3,
+        14,
+        '#38BDF8'
+      );
+      this.world.floatingTexts.push({
+        x: attacker.x,
+        y: attacker.y - attacker.height - 16,
+        vy: -42,
+        text: '剑碎!',
+        color: '#38BDF8',
+        scale: 0.95,
+        age: 0,
+        maxAge: 0.85,
+      });
+      attacker.weapon = null;
+    }
+  }
+
   private fireRangedWeapon(
     f: StickFighter,
-    kind: 'pistol' | 'shotgun' | 'rocket',
+    kind: 'pistol' | 'shotgun' | 'rocket' | 'grenade',
     aimX: number,
     aimY: number,
     sounds: SoundEventKind[]
@@ -850,6 +971,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         kind: 'pistol',
         ownerSlotId: f.slotId,
         colorHex: f.config.colorHex,
+        originX: muzzleX,
+        originY: muzzleY,
         x: muzzleX,
         y: muzzleY,
         prevX: muzzleX,
@@ -902,6 +1025,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
           volleyId,
           ownerSlotId: f.slotId,
           colorHex: f.config.colorHex,
+          originX: muzzleX,
+          originY: muzzleY,
           x: muzzleX,
           y: muzzleY,
           prevX: muzzleX,
@@ -918,9 +1043,13 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         });
       }
 
-      // 猎枪中强后坐力 + 红色猎枪弹壳 + 宽扇口焰
-      f.vx -= nx * 135;
-      f.vy -= ny * 48;
+      // 猎枪后坐力位移反馈：赋予短时滑移阻尼窗口 + 反向推力 + 脚底擦地微尘
+      f.recoilTimer = 0.14;
+      f.vx -= nx * 210;
+      f.vy -= ny * 65;
+      if (f.onGround && Math.abs(nx) > 0.2) {
+        this.spawnDustBurst(f.x, f.y, 4, '#CBD5E1');
+      }
       this.world.particles.push({
         x: f.x + nx * 8,
         y: muzzleY - 2,
@@ -937,8 +1066,34 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         vRot: 16,
       });
       this.spawnSparkBurst(muzzleX, muzzleY, nx, ny, 12, '#FB923C');
-      this.addShake(5.2, -nx, -ny);
+      this.addShake(5.5, -nx, -ny);
       sounds.push('fire_shotgun');
+    } else if (kind === 'grenade') {
+      // 碎片手雷：8 方向抛物线投出，触碰任何物体立即引发一格小爆破 + 6 向 0.3× 碎片
+      const throwVel = computeGrenadeThrowVelocity(nx, ny, this.rules.grenadeSpeed);
+      this.world.projectiles.push({
+        id: this.nextEntityId++,
+        kind: 'grenade',
+        ownerSlotId: f.slotId,
+        colorHex: f.config.colorHex,
+        originX: muzzleX,
+        originY: muzzleY,
+        x: muzzleX,
+        y: muzzleY,
+        prevX: muzzleX,
+        prevY: muzzleY,
+        vx: throwVel.vx,
+        vy: throwVel.vy,
+        radius: 6,
+        damage: this.rules.grenadeDamage,
+        knockback: 360,
+        gravityScale: 1,
+        age: 0,
+        maxAge: 4.2,
+        blastRadius: GRENADE_BLAST_RADIUS,
+      });
+      f.vx += nx * 35;
+      sounds.push('stick_grenade_throw');
     } else {
       const speed = this.rules.rocketSpeed;
       this.world.projectiles.push({
@@ -946,6 +1101,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         kind: 'rocket',
         ownerSlotId: f.slotId,
         colorHex: f.config.colorHex,
+        originX: muzzleX,
+        originY: muzzleY,
         x: muzzleX,
         y: muzzleY,
         prevX: muzzleX,
@@ -1025,29 +1182,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     }
 
     // 长剑耐久制：击中对手一次扣 1 点（挥空不掉），默认 5 点，归零碎裂
-    if (kind === 'sword' && attacker.weapon && attacker.weapon.kind === 'sword') {
-      attacker.weapon.remaining -= 1;
-      if (attacker.weapon.remaining <= 0) {
-        this.spawnSparkBurst(
-          attacker.x + dir * 30,
-          attacker.y - attacker.height * 0.55,
-          dir,
-          -0.3,
-          14,
-          '#38BDF8'
-        );
-        this.world.floatingTexts.push({
-          x: attacker.x,
-          y: attacker.y - attacker.height - 16,
-          vy: -42,
-          text: '剑碎!',
-          color: '#38BDF8',
-          scale: 0.95,
-          age: 0,
-          maxAge: 0.85,
-        });
-        attacker.weapon = null;
-      }
+    if (kind === 'sword') {
+      this.consumeSwordDurability(attacker, dir);
     }
 
     this.dealDamage(attacker.slotId, target, damage, kbX, kbY, stun, hitstop, shake, sounds);
@@ -1063,7 +1199,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     hitstopSeconds: number,
     shakePower: number,
     sounds: SoundEventKind[],
-    volleyId?: number
+    volleyId?: number,
+    hitZone?: ProjectileHitZone
   ): boolean {
     const sameVolleyBypass =
       volleyId !== undefined && target.lastHitVolleyId === volleyId;
@@ -1094,27 +1231,43 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       this.lastDamagedBy.set(target.slotId, attackerSlotId);
     }
 
+    const isHeadshot = hitZone === 'head';
+    const isLegShot = hitZone === 'legs';
     const impactX = target.x;
-    const impactY = target.y - target.height * 0.55;
+    const impactY = isHeadshot
+      ? target.y - target.height * 0.88
+      : isLegShot
+      ? target.y - target.height * 0.18
+      : target.y - target.height * 0.55;
     const dirLen = Math.hypot(kbX, kbY) || 1;
     this.spawnSparkBurst(
       impactX,
       impactY,
       kbX / dirLen,
       kbY / dirLen,
-      damage >= 25 ? 16 : 9,
-      damage >= 25 ? '#F97316' : '#FEF08A'
+      isHeadshot || damage >= 25 ? 16 : isLegShot ? 6 : 9,
+      isHeadshot ? '#EF4444' : damage >= 25 ? '#F97316' : '#FEF08A'
     );
+
+    const dmgText = isHeadshot ? `爆头 -${damage}!` : `-${damage}`;
+    const dmgColor = isHeadshot
+      ? '#EF4444'
+      : isLegShot
+      ? '#94A3B8'
+      : damage >= 25
+      ? '#EF4444'
+      : '#F59E0B';
+    const dmgScale = isHeadshot ? 1.32 : isLegShot ? 0.85 : damage >= 25 ? 1.3 : 1.0;
 
     this.world.floatingTexts.push({
       x: impactX + (this.rng.next() - 0.5) * 16,
-      y: target.y - target.height - 10,
-      vy: -62,
-      text: `-${damage}`,
-      color: damage >= 25 ? '#EF4444' : '#F59E0B',
-      scale: damage >= 25 ? 1.3 : 1.0,
+      y: target.y - target.height - (isHeadshot ? 16 : 10),
+      vy: isHeadshot ? -72 : -62,
+      text: dmgText,
+      color: dmgColor,
+      scale: dmgScale,
       age: 0,
-      maxAge: 0.78,
+      maxAge: isHeadshot ? 0.92 : 0.78,
     });
 
     this.world.hitstopTimer = Math.max(this.world.hitstopTimer, hitstopSeconds);
@@ -1202,9 +1355,10 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       proj.prevY = proj.y;
 
       if (proj.gravityScale > 0) {
-        proj.vy += this.rules.rocketGravity * proj.gravityScale * dt;
-        // 火箭飞行烟迹
-        if (Math.floor(proj.age * 60) % 2 === 0) {
+        const g = proj.kind === 'grenade' ? this.rules.grenadeGravity : this.rules.rocketGravity;
+        proj.vy += g * proj.gravityScale * dt;
+        // 火箭飞行烟迹 / 手雷微弱引信火星
+        if (proj.kind === 'rocket' && Math.floor(proj.age * 60) % 2 === 0) {
           this.world.particles.push({
             x: proj.x - proj.vx * 0.015,
             y: proj.y - proj.vy * 0.015,
@@ -1217,6 +1371,22 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
             maxAge: 0.42,
             gravity: -35,
             kind: 'smoke',
+            rotation: 0,
+            vRot: 0,
+          });
+        } else if (proj.kind === 'grenade' && Math.floor(proj.age * 40) % 3 === 0) {
+          this.world.particles.push({
+            x: proj.x,
+            y: proj.y - 4,
+            vx: (this.rng.next() - 0.5) * 35,
+            vy: -35 - this.rng.next() * 25,
+            size: 2.2,
+            color: '#BEF264',
+            alpha: 0.9,
+            age: 0,
+            maxAge: 0.18,
+            gravity: 160,
+            kind: 'spark',
             rotation: 0,
             vRot: 0,
           });
@@ -1241,12 +1411,12 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
           break;
         }
 
-        // 2. 命中角色检测（无敌保护期间免疫子弹命中与击退；同一发猎枪齐射的弹丸可同时命中）
+        // 2. 命中角色检测（无敌保护期间免疫直射子弹命中与击退；碎片手雷碰任何角色直接引爆）
         for (const f of this.world.fighters) {
           if (!f.alive) continue;
           const sameVolleyBypass =
             proj.volleyId !== undefined && f.lastHitVolleyId === proj.volleyId;
-          if (f.invulnTimer > 0 && !sameVolleyBypass) continue;
+          if (f.invulnTimer > 0 && !sameVolleyBypass && proj.kind !== 'grenade') continue;
           if (f.slotId === proj.ownerSlotId && proj.age < 0.14) continue;
           const withinX = Math.abs(proj.x - f.x) <= f.halfWidth + proj.radius;
           const withinY = proj.y >= f.y - f.height - proj.radius && proj.y <= f.y + proj.radius;
@@ -1260,22 +1430,49 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       }
 
       if (impacted || proj.age >= proj.maxAge) {
+        // 先移出当前弹体，避免手雷引爆新增的 6 枚碎片干扰反向遍历索引
+        this.world.projectiles.splice(i, 1);
+
+        // 猎枪散弹命中或到达散开终点时保留从枪口到散开点的半透明轨迹残影
+        if (proj.kind === 'shotgun') {
+          this.world.projectileTrails.push({
+            x1: proj.originX,
+            y1: proj.originY,
+            x2: proj.x,
+            y2: proj.y,
+            color: '#FB923C',
+            width: 3.2,
+            age: 0,
+            maxAge: 0.24,
+          });
+        }
+
         if (proj.kind === 'rocket') {
           this.detonateRocket(proj.x, proj.y, proj.ownerSlotId, proj.blastRadius, proj.damage, sounds);
+        } else if (proj.kind === 'grenade') {
+          this.detonateGrenade(proj, sounds);
         } else if (hitFighter) {
           const dirLen = Math.hypot(proj.vx, proj.vy) || 1;
           const isShotgun = proj.kind === 'shotgun';
+          const isShrapnel = proj.kind === 'shrapnel';
+          // 全部直射弹丸（手枪、猎枪、手雷碎片）适用打头 1.5x / 打身 1.0x / 打脚 0.6x
+          const hitZone = resolveProjectileHitZone(proj.y, hitFighter.y, hitFighter.height);
+          const finalDamage = Math.max(1, Math.round(proj.damage * hitZone.multiplier));
           const landed = this.dealDamage(
             proj.ownerSlotId,
             hitFighter,
-            proj.damage,
+            finalDamage,
             (proj.vx / dirLen) * proj.knockback,
-            Math.min(isShotgun ? -115 : -150, (proj.vy / dirLen) * proj.knockback * 0.55 - (isShotgun ? 85 : 120)),
-            isShotgun ? 0.18 : 0.22,
-            isShotgun ? 0.042 : 0.052,
-            isShotgun ? 4.4 : 5.8,
+            Math.min(
+              isShotgun || isShrapnel ? -110 : -150,
+              (proj.vy / dirLen) * proj.knockback * 0.55 - (isShotgun || isShrapnel ? 80 : 120)
+            ),
+            isShrapnel ? 0.14 : isShotgun ? 0.18 : 0.22,
+            hitZone.zone === 'head' ? 0.062 : isShrapnel ? 0.032 : isShotgun ? 0.042 : 0.052,
+            hitZone.zone === 'head' ? 6.4 : isShrapnel ? 3.2 : isShotgun ? 4.4 : 5.8,
             sounds,
-            proj.volleyId
+            proj.volleyId,
+            hitZone.zone
           );
           if (landed) {
             const ownerStats = this.world.stats[proj.ownerSlotId];
@@ -1287,14 +1484,136 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
             proj.y,
             -Math.sign(proj.vx || 1),
             -0.4,
-            proj.kind === 'shotgun' ? 5 : 7,
-            proj.kind === 'shotgun' ? '#FB923C' : '#FDE047'
+            proj.kind === 'shrapnel' ? 4 : proj.kind === 'shotgun' ? 5 : 7,
+            proj.kind === 'shrapnel' ? '#BEF264' : proj.kind === 'shotgun' ? '#FB923C' : '#FDE047'
           );
           sounds.push('bounce');
         }
-        this.world.projectiles.splice(i, 1);
       }
     }
+  }
+
+  private detonateGrenade(proj: StickProjectile, sounds: SoundEventKind[]): void {
+    const cx = proj.x;
+    const cy = proj.y;
+    const blastRadius = proj.blastRadius || GRENADE_BLAST_RADIUS;
+
+    // 1. 小爆破仅炸毁命中的单个可破坏砖块/短平台（底层基岩永久保留）
+    const brokenTile = destroySingleNearestTile(this.world.terrain, cx, cy, blastRadius + 4);
+    if (brokenTile) {
+      sounds.push('stick_block_break');
+      for (let k = 0; k < 5; k += 1) {
+        const angle = this.rng.next() * Math.PI * 2;
+        const spd = 95 + this.rng.next() * 195;
+        this.world.particles.push({
+          x: brokenTile.x + (this.rng.next() - 0.5) * 14,
+          y: brokenTile.y + (this.rng.next() - 0.5) * 14,
+          vx: Math.cos(angle) * spd,
+          vy: Math.sin(angle) * spd - 135,
+          size: brokenTile.kind === 'platform' ? 6 : 8,
+          color: brokenTile.kind === 'platform' ? '#64748B' : '#B47B56',
+          alpha: 1,
+          age: 0,
+          maxAge: 0.55 + this.rng.next() * 0.3,
+          gravity: 920,
+          kind: 'debris',
+          rotation: this.rng.next() * Math.PI,
+          vRot: (this.rng.next() - 0.5) * 14,
+        });
+      }
+    }
+
+    // 2. 极小范围爆破伤害（约 1 个方框大小）
+    let hitAnyone = false;
+    for (const f of this.world.fighters) {
+      if (!f.alive || f.invulnTimer > 0) continue;
+      const closestX = Math.max(f.x - f.halfWidth, Math.min(cx, f.x + f.halfWidth));
+      const closestY = Math.max(f.y - f.height, Math.min(cy, f.y));
+      const dist = Math.hypot(closestX - cx, closestY - cy);
+      const splash = computeRocketSplash(dist, blastRadius, proj.damage);
+      if (!splash) continue;
+
+      const fx = f.x;
+      const fy = f.y - f.height * 0.5;
+      const dx = fx - cx;
+      const dy = fy - cy;
+      const len = Math.hypot(dx, dy) || 1;
+      const kbSpeed = 360 * splash.knockbackScale;
+      const landed = this.dealDamage(
+        proj.ownerSlotId,
+        f,
+        splash.damage,
+        (dx / len) * kbSpeed,
+        Math.min(-210, (dy / len) * kbSpeed - 150),
+        0.24,
+        0.058,
+        7.5,
+        sounds
+      );
+      if (landed && f.slotId !== proj.ownerSlotId) {
+        hitAnyone = true;
+      }
+    }
+    if (hitAnyone) {
+      const ownerStats = this.world.stats[proj.ownerSlotId];
+      if (ownerStats) ownerStats.hitsLanded += 1;
+    }
+
+    // 3. 计算安全爆心（略微退回空气侧，避免 6 向碎片刚生成即撞死在底层基岩边缘）
+    const velLen = Math.hypot(proj.vx, proj.vy) || 1;
+    let safeX = cx;
+    let safeY = cy;
+    if (sampleProjectileTerrainHit(this.world.terrain, safeX, safeY) !== 'empty') {
+      safeX = cx - (proj.vx / velLen) * 10;
+      safeY = cy - (proj.vy / velLen) * 10;
+    }
+
+    // 4. 向 6 个均匀方向（每 60° 一道）直线射出 0.3× 伤害碎片
+    const shrapnelDamage = Math.max(
+      1,
+      Math.round(proj.damage * this.rules.grenadeShrapnelMultiplier)
+    );
+    const shrapnelSpeed = 680;
+    for (let k = 0; k < 6; k += 1) {
+      const ang = (k * Math.PI) / 3;
+      const sx = safeX + Math.cos(ang) * 5;
+      const sy = safeY + Math.sin(ang) * 5;
+      this.world.projectiles.push({
+        id: this.nextEntityId++,
+        kind: 'shrapnel',
+        ownerSlotId: proj.ownerSlotId,
+        colorHex: proj.colorHex,
+        originX: safeX,
+        originY: safeY,
+        x: sx,
+        y: sy,
+        prevX: safeX,
+        prevY: safeY,
+        vx: Math.cos(ang) * shrapnelSpeed,
+        vy: Math.sin(ang) * shrapnelSpeed,
+        radius: 3.0,
+        damage: shrapnelDamage,
+        knockback: 145,
+        gravityScale: 0, // 6 向碎片直线高速飞出
+        age: 0,
+        maxAge: 0.72,
+        blastRadius: 0,
+      });
+    }
+
+    // 5. 紧致小爆破特效与震屏
+    this.world.explosions.push({
+      x: cx,
+      y: cy,
+      radius: blastRadius,
+      age: 0,
+      maxAge: 0.28,
+      color: '#84CC16',
+    });
+    this.spawnSparkBurst(cx, cy, 0, -1, 14, '#BEF264');
+    this.addShake(7.5, 0, -1);
+    sounds.push('fire_frag');
+    sounds.push('explosion');
   }
 
   private detonateRocket(
@@ -1673,6 +1992,14 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       }
     }
 
+    for (let i = this.world.projectileTrails.length - 1; i >= 0; i -= 1) {
+      const tr = this.world.projectileTrails[i];
+      tr.age += dt;
+      if (tr.age >= tr.maxAge) {
+        this.world.projectileTrails.splice(i, 1);
+      }
+    }
+
     for (let i = this.world.floatingTexts.length - 1; i >= 0; i -= 1) {
       const t = this.world.floatingTexts[i];
       t.age += dt;
@@ -1788,6 +2115,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     this.world.fighters = this.spawnFightersForTerrain(terrain, nextRound);
     this.world.pickups = [];
     this.world.projectiles = [];
+    this.world.projectileTrails = [];
     this.world.slashes = [];
     this.world.explosions = [];
     this.world.particles = [];

@@ -4,6 +4,7 @@ import {
   ArrowLeftRight,
   ArrowUp,
   ArrowUpDown,
+  Bomb,
   Clock,
   Compass,
   Crosshair,
@@ -25,6 +26,7 @@ import {
   RotateCw,
   Shield,
   SlidersHorizontal,
+  Sparkles,
   Sword,
   Timer,
   Trophy,
@@ -222,6 +224,17 @@ function resolveFieldIconSpec(fieldKey: string): FieldIconSpec {
       return { icon: <Rocket className="w-3.5 h-3.5" aria-hidden="true" />, color: '#DC2626' };
     case 'rocketBlastRadius':
       return { icon: <BlastRadiusSvg />, color: '#DC2626' };
+    case 'enableGrenade':
+    case 'grenadeAmmo':
+      return { icon: <Bomb className="w-3.5 h-3.5" aria-hidden="true" />, color: '#65A30D' };
+    case 'grenadeDamage':
+      return { icon: <Flame className="w-3.5 h-3.5" aria-hidden="true" />, color: '#65A30D' };
+    case 'grenadeSpeed':
+      return { icon: <BulletSpeedSvg />, color: '#65A30D' };
+    case 'grenadeGravity':
+      return { icon: <ArrowDown className="w-3.5 h-3.5" aria-hidden="true" />, color: '#65A30D' };
+    case 'grenadeShrapnelMultiplier':
+      return { icon: <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />, color: '#65A30D' };
     case 'enableMedkit':
     case 'medkitHealPercent':
       return { icon: <HeartPulse className="w-3.5 h-3.5" aria-hidden="true" />, color: '#10B981' };

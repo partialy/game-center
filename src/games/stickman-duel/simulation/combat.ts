@@ -3,6 +3,7 @@ import type {
   HeldWeaponState,
   StickFighter,
   StickPickupKind,
+  StickProjectile,
   StickWeaponKind,
   StickmanDuelRules,
 } from '../types';
@@ -12,6 +13,7 @@ export const PICKUP_LABELS: Record<StickPickupKind, string> = {
   pistol: '手枪',
   shotgun: '猎枪',
   rocket: '火箭筒',
+  grenade: '碎片手雷',
   medkit: '血包',
 };
 
@@ -20,6 +22,7 @@ export const PICKUP_ACCENTS: Record<StickPickupKind, string> = {
   pistol: '#F59E0B',
   shotgun: '#EA580C',
   rocket: '#EF4444',
+  grenade: '#65A30D',
   medkit: '#10B981',
 };
 
@@ -57,7 +60,62 @@ export function getWeaponMaxCharges(kind: StickWeaponKind, rules: StickmanDuelRu
       return Math.max(1, Math.round(rules.shotgunAmmo));
     case 'rocket':
       return Math.max(1, Math.round(rules.rocketAmmo));
+    case 'grenade':
+      return Math.max(1, Math.round(rules.grenadeAmmo));
   }
+}
+
+export type ProjectileHitZone = 'head' | 'body' | 'legs';
+
+/**
+ * 挥剑可斩断弹体判断：
+ * - 手枪子弹、猎枪散弹、手雷 6 向碎片均可被长剑斩碎
+ * - 火箭弹与飞行中的整颗手雷不可被剑斩断
+ */
+export function isProjectileSlashable(kind: StickProjectile['kind']): boolean {
+  return kind === 'pistol' || kind === 'shotgun' || kind === 'shrapnel';
+}
+
+/**
+ * 直射弹丸命中角色部位倍率判定：
+ * - 顶部头部区间（< 28%）：1.5× 爆头暴击
+ * - 中部躯干区间（28%..72%）：1.0× 常规伤害
+ * - 底部腿脚区间（> 72%）：0.6× 腿部减伤
+ */
+export function resolveProjectileHitZone(
+  projectileY: number,
+  fighterFeetY: number,
+  fighterHeight: number
+): { zone: ProjectileHitZone; multiplier: number } {
+  const safeHeight = Math.max(1, fighterHeight);
+  const topY = fighterFeetY - safeHeight;
+  const relY = (projectileY - topY) / safeHeight;
+  if (relY < 0.28) {
+    return { zone: 'head', multiplier: 1.5 };
+  }
+  if (relY > 0.72) {
+    return { zone: 'legs', multiplier: 0.6 };
+  }
+  return { zone: 'body', multiplier: 1.0 };
+}
+
+/**
+ * 碎片手雷 8 方向抛物线投掷初速计算：
+ * - 水平投掷时自动补一小段自然上扬抛弧，其余斜上/正上/斜下/正下方向严格沿 8 向抛出
+ */
+export function computeGrenadeThrowVelocity(
+  aimX: number,
+  aimY: number,
+  speed: number
+): { vx: number; vy: number } {
+  const len = Math.hypot(aimX, aimY) || 1;
+  const nx = aimX / len;
+  const ny = aimY / len;
+  const flatArcLift = Math.abs(ny) < 0.1 ? -115 : 0;
+  return {
+    vx: nx * speed,
+    vy: ny * speed + flatArcLift,
+  };
 }
 
 export function formatWeaponBadge(weapon: HeldWeaponState | null): string {

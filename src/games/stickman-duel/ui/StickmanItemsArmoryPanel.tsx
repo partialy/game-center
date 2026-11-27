@@ -46,10 +46,10 @@ const STICKMAN_ARMORY_ITEMS: StickmanArmoryItemDef[] = [
   {
     kind: 'sword',
     name: '长剑',
-    roleLabel: '近战大弧斩击 · 耐久制',
+    roleLabel: '大弧斩击可砍弹 · 耐久制',
     enableKey: 'enableSword',
     detailKeys: ['swordDurability', 'swordDamage'],
-    summarize: (r) => `${r.swordDurability} 点耐久 · ${r.swordDamage} 伤害 · 命中 -1`,
+    summarize: (r) => `${r.swordDurability} 点耐久 · ${r.swordDamage} 伤害 · 命中/砍弹 -1`,
   },
   {
     kind: 'pistol',
@@ -62,7 +62,7 @@ const STICKMAN_ARMORY_ITEMS: StickmanArmoryItemDef[] = [
   {
     kind: 'shotgun',
     name: '猎枪',
-    roleLabel: '扇形随机散射 · 近中距爆发',
+    roleLabel: '后坐力扇形散射 · 轨迹可见',
     enableKey: 'enableShotgun',
     detailKeys: [
       'shotgunAmmo',
@@ -88,6 +88,21 @@ const STICKMAN_ARMORY_ITEMS: StickmanArmoryItemDef[] = [
     ],
     summarize: (r) =>
       `${r.rocketAmmo} 发 · ${r.rocketDamage} 爆伤 · 半径 ${r.rocketBlastRadius}px`,
+  },
+  {
+    kind: 'grenade',
+    name: '碎片手雷',
+    roleLabel: '抛物线一格爆破 · 6向碎片',
+    enableKey: 'enableGrenade',
+    detailKeys: [
+      'grenadeAmmo',
+      'grenadeDamage',
+      'grenadeSpeed',
+      'grenadeGravity',
+      'grenadeShrapnelMultiplier',
+    ],
+    summarize: (r) =>
+      `${r.grenadeAmmo} 颗 · ${r.grenadeDamage} 爆伤 · 6向 ${Math.round(r.grenadeShrapnelMultiplier * 100)}% 碎片`,
   },
   {
     kind: 'medkit',
@@ -130,6 +145,11 @@ const SHORT_FIELD_LABELS: Partial<Record<StickmanRuleKey, string>> = {
   rocketBlastRadius: '爆炸半径',
   rocketSpeed: '发射初速',
   rocketGravity: '重力下坠',
+  grenadeAmmo: '携带颗数',
+  grenadeDamage: '小爆破伤害',
+  grenadeSpeed: '投掷初速',
+  grenadeGravity: '重力下坠',
+  grenadeShrapnelMultiplier: '碎片倍率',
   medkitHealPercent: '回复比例',
 };
 
@@ -332,7 +352,7 @@ export function StickmanItemsArmoryPanel({
         </div>
       </section>
 
-      {/* 2. 四大武器与补给军械库卡片网格 */}
+      {/* 2. 六大武器与补给军械库卡片网格 */}
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
