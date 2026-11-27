@@ -32,6 +32,15 @@ import {
   pickNextParryShotKind,
 } from './training';
 import { StickmanDuelSession } from './world';
+import {
+  blendStickmanPose,
+  computeTargetStickmanPose,
+  solveTwoBoneIK,
+  STICK_FOREARM_LEN,
+  STICK_SHIN_LEN,
+  STICK_THIGH_LEN,
+  STICK_UPPER_ARM_LEN,
+} from '../render/stickmanPose';
 
 function createTrainingTestSession(initialDrill?: 'free' | 'headshot' | 'parry' | 'combo') {
   const rules = {
@@ -1445,6 +1454,176 @@ test('打击感分层：普通攻击/开枪/斩弹优先作用在人物与局部
     '火箭爆破应在爆心释放大范围局部场景震波'
   );
 });
+
+test('火柴人 2-Bone IK 骨骼与多姿态动作库：步行/疾跑/急转刹步/四阶段滞空/落地缓冲与三段连招轮廓清晰且平滑插值', () => {
+  // 1. 2-Bone IK 长度恒定性校验
+  const legIK = solveTwoBoneIK(
+    { x: 0, y: -20 },
+    { x: 8, y: -2 },
+    STICK_THIGH_LEN,
+    STICK_SHIN_LEN,
+    -1
+  );
+  const thighLen = Math.hypot(legIK.joint.x - 0, legIK.joint.y - -20);
+  const shinLen = Math.hypot(legIK.end.x - legIK.joint.x, legIK.end.y - legIK.joint.y);
+  assert.ok(Math.abs(thighLen - STICK_THIGH_LEN) < 0.25, `大腿骨长应保持恒定，实际 ${thighLen.toFixed(2)}`);
+  assert.ok(Math.abs(shinLen - STICK_SHIN_LEN) < 0.25, `小腿骨长应保持恒定，实际 ${shinLen.toFixed(2)}`);
+
+  const armA = solveTwoBoneIK({ x: 0, y: -38 }, { x: 14, y: -30 }, STICK_UPPER_ARM_LEN, STICK_FOREARM_LEN, 1);
+  const armB = solveTwoBoneIK({ x: 0, y: -38 }, { x: 14, y: -30 }, STICK_UPPER_ARM_LEN, STICK_FOREARM_LEN, -1);
+  assert.ok(Math.hypot(armA.joint.x - armB.joint.x, armA.joint.y - armB.joint.y) > 4, '相反弯曲方向应翻转手肘朝向');
+
+  // 2. 基于真实 Fighter 快照检查全状态姿态差异
+  const session = createTrainingTestSession('free');
+  const [f] = session.getWorldState().fighters;
+  f.facing = 1;
+  f.onGround = true;
+  f.vx = 0;
+  f.vy = 0;
+  f.attack = null;
+  f.weapon = null;
+  f.hitStunTimer = 0;
+  f.takeoffTimer = 0;
+  f.landingTimer = 0;
+  f.landingStrength = 0;
+  f.skidTimer = 0;
+
+  const idleA = computeTargetStickmanPose(f, 0.0, 260);
+  const idleB = computeTargetStickmanPose(f, 0.35, 260);
+  assert.equal(idleA.locomotion, 'idle');
+  assert.ok(Math.abs(idleA.hip.y - idleB.hip.y) > 0.2, '待机姿态应有自然的格斗呼吸重心起伏');
+
+  // 慢走 vs 疾跑
+  f.vx = 85;
+  f.runPhase = 0.9;
+  const walkPose = computeTargetStickmanPose(f, 0.5, 260);
+  assert.equal(walkPose.locomotion, 'walk');
+
+  f.vx = 250;
+  const sprintPose = computeTargetStickmanPose(f, 0.5, 260);
+  assert.equal(sprintPose.locomotion, 'sprint');
+  assert.ok(
+    sprintPose.shoulder.x - sprintPose.hip.x > walkPose.shoulder.x - walkPose.hip.x + 1.5,
+    '疾跑姿态前倾角应明显大于慢走'
+  );
+
+  // 急转刹步
+  f.vx = 180;
+  f.skidTimer = 0.12;
+  const skidPose = computeTargetStickmanPose(f, 0.6, 260);
+  assert.equal(skidPose.locomotion, 'skid');
+  f.skidTimer = 0;
+
+  // 空中四阶段：起跳拉伸 / 滞空顶点 / 急速下坠 / 二段跳抱膝空翻
+  f.onGround = false;
+  f.vy = -420;
+  f.jumpsUsed = 1;
+  f.takeoffTimer = 0.11;
+  const risePose = computeTargetStickmanPose(f, 0.7, 260);
+  assert.equal(risePose.locomotion, 'jump_rise');
+  assert.ok(risePose.poseScaleY > 1.03 && risePose.poseScaleX < 0.97, '起跳瞬态应呈现纵向拉伸弹性');
+
+  f.takeoffTimer = 0;
+  f.vy = 15;
+  const apexPose = computeTargetStickmanPose(f, 0.8, 260);
+  assert.equal(apexPose.locomotion, 'air_apex');
+
+  f.vy = 340;
+  const fallPose = computeTargetStickmanPose(f, 0.9, 260);
+  assert.equal(fallPose.locomotion, 'air_fall');
+  assert.ok(fallPose.frontHand.y < fallPose.shoulder.y, '急速下坠时手臂应被风压抬高保持平衡');
+
+  f.jumpsUsed = 2;
+  f.airSpinAngle = 1.4;
+  f.vy = -220;
+  const tuckPose = computeTargetStickmanPose(f, 1.0, 260);
+  assert.equal(tuckPose.locomotion, 'double_jump_tuck');
+  assert.ok(tuckPose.frontFoot.y < -8, '二段跳抱膝空翻时双脚应紧凑收拢至腰腹附近');
+
+  // 落地缓冲下蹲
+  f.onGround = true;
+  f.jumpsUsed = 0;
+  f.airSpinAngle = 0;
+  f.vx = 0;
+  f.vy = 0;
+  f.landingTimer = 0.14;
+  f.landingStrength = 0.9;
+  const landPose = computeTargetStickmanPose(f, 1.1, 260);
+  assert.equal(landPose.locomotion, 'landing');
+  assert.ok(landPose.hip.y > idleA.hip.y + 2, '落地缓冲时重心应明显下蹲');
+  assert.ok(landPose.poseScaleX > 1.03 && landPose.poseScaleY < 0.97, '落地缓冲应产生横向微扁的弹性挤压');
+  f.landingTimer = 0;
+
+  // 三段连拳姿态分化（刺拳 vs 上勾拳）
+  const punchAttack = {
+    kind: 'punch' as const,
+    elapsed: 0.08,
+    startup: 0.045,
+    activeEnd: 0.13,
+    totalDuration: 0.24,
+    aimX: 1,
+    aimY: 0,
+    comboStep: 0,
+    hitSlotIds: [] as string[],
+    projectileFired: false,
+  };
+  f.attack = punchAttack;
+  const jabPose = computeTargetStickmanPose(f, 1.2, 260);
+  punchAttack.comboStep = 2;
+  const uppercutPose = computeTargetStickmanPose(f, 1.2, 260);
+  assert.equal(jabPose.locomotion, 'attack');
+  assert.ok(uppercutPose.frontHand.y < jabPose.frontHand.y - 4, '第 3 段上勾拳出拳高度应明显高于第 1 段刺拳');
+
+  // 姿态平滑插值：单帧过渡应落在起止姿态之间且无 NaN
+  const blended = blendStickmanPose(idleA, landPose, 1 / 60);
+  assert.ok(Number.isFinite(blended.hip.y) && Number.isFinite(blended.frontFoot.y));
+  assert.ok(
+    blended.hip.y > idleA.hip.y && blended.hip.y < landPose.hip.y,
+    '姿态平滑插值应消除单帧生硬跳变'
+  );
+});
+
+test('物理模拟实时驱动起跳拉伸、落地缓冲与急转刹步动画计时器', () => {
+  const session = createTrainingTestSession('free');
+  const world = session.getWorldState();
+  const [p1] = world.fighters;
+
+  // 清空前方一排便于加速跑动与急转
+  const floorY = (world.terrain.rows - 1) * STICKMAN_TILE_SIZE;
+  for (let c = 4; c <= 20; c += 1) {
+    setTile(world.terrain, c, world.terrain.rows - 2, 'empty');
+    setTile(world.terrain, c, world.terrain.rows - 3, 'empty');
+  }
+  p1.x = 240;
+  p1.y = floorY;
+  p1.vx = 0;
+  p1.vy = 0;
+  p1.onGround = true;
+
+  // 1. 起跳应立刻触发 takeoffTimer，落地后应触发 landingTimer 与 landingStrength
+  session.step(1 / 60, createStaticInputFrame({ p1: { jump: { justPressed: true, held: true } } }));
+  assert.ok(p1.takeoffTimer > 0, '按下跳跃离地瞬间应激活起跳拉伸计时器');
+
+  let sawLanding = false;
+  for (let i = 0; i < 90; i += 1) {
+    session.step(1 / 60, createStaticInputFrame({}));
+    if (p1.onGround && p1.landingTimer > 0 && p1.landingStrength > 0.2) {
+      sawLanding = true;
+      break;
+    }
+  }
+  assert.equal(sawLanding, true, '从空中落回地面时应激活落地缓冲计时与冲击强度');
+
+  // 2. 高速向右疾跑后猛拉向左应触发急转刹步 skidTimer
+  for (let i = 0; i < 25; i += 1) {
+    session.step(1 / 60, createStaticInputFrame({ p1: { moveRight: { justPressed: false, held: true } } }));
+  }
+  assert.ok(p1.vx > 180, '持续向右移动应达到疾跑速度');
+
+  session.step(1 / 60, createStaticInputFrame({ p1: { moveLeft: { justPressed: true, held: true } } }));
+  assert.ok(p1.skidTimer > 0, '高速疾跑突然反拉方向应触发急转刹步姿态计时器');
+});
+
 
 
 

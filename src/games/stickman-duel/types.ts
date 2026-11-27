@@ -85,6 +85,13 @@ export interface StickFighter {
   /** 动画/状态机计时 */
   runPhase: number;
   airSpinAngle: number;
+  /** 落地缓冲下蹲计时与强度（0..1，按落地速度自适应深蹲幅度） */
+  landingTimer: number;
+  landingStrength: number;
+  /** 起跳/二段跳瞬间弹性拉伸计时 */
+  takeoffTimer: number;
+  /** 高速急停/急转刹步姿态计时 */
+  skidTimer: number;
   hitStunTimer: number;
   hitFlashTimer: number;
   invulnTimer: number;

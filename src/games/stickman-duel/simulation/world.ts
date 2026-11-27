@@ -122,6 +122,10 @@ function createFighter(
     dropThroughTimer: 0,
     runPhase: 0,
     airSpinAngle: 0,
+    landingTimer: 0,
+    landingStrength: 0,
+    takeoffTimer: 0,
+    skidTimer: 0,
     hitStunTimer: 0,
     hitFlashTimer: 0,
     invulnTimer: 0,
@@ -969,6 +973,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       f.koSpin += f.vx * dt * 0.028;
     }
     f.impactShakeTimer = Math.max(0, f.impactShakeTimer - dt);
+    f.landingTimer = Math.max(0, f.landingTimer - dt);
+    f.takeoffTimer = Math.max(0, f.takeoffTimer - dt);
+    f.skidTimer = Math.max(0, f.skidTimer - dt);
     this.updateScarf(f, dt);
     this.smoothDisplayHp(f, dt);
   }
@@ -990,6 +997,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     // 计时器更新
     f.hitFlashTimer = Math.max(0, f.hitFlashTimer - dt);
     f.impactShakeTimer = Math.max(0, f.impactShakeTimer - dt);
+    f.landingTimer = Math.max(0, f.landingTimer - dt);
+    f.takeoffTimer = Math.max(0, f.takeoffTimer - dt);
+    f.skidTimer = Math.max(0, f.skidTimer - dt);
     f.invulnTimer = Math.max(0, f.invulnTimer - dt);
     if (f.invulnTimer <= 0) {
       f.lastHitVolleyId = null;
@@ -1061,8 +1071,24 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
           f.vx += Math.sign(diff) * maxDelta;
         }
       }
-      if (f.onGround && Math.abs(f.vx) > 25 && f.recoilTimer <= 0) {
-        f.runPhase += Math.abs(f.vx) * dt * 0.055;
+      // 急转刹步检测：在地面高速反向输入时触发后仰刹步姿态与脚底轻尘
+      const reversingOnGround =
+        f.onGround &&
+        hasMoveInput &&
+        f.recoilTimer <= 0 &&
+        Math.abs(f.vx) > 130 &&
+        Math.sign(dirX) !== Math.sign(f.vx);
+      if (reversingOnGround) {
+        if (f.skidTimer <= 0.02) {
+          this.spawnDustBurst(f.x, f.y, 3, '#CBD5E1');
+        }
+        f.skidTimer = 0.14;
+      }
+      if (f.onGround && Math.abs(f.vx) > 14 && f.recoilTimer <= 0) {
+        // 慢走步频更舒展、疾跑步频更紧凑
+        const speedNorm = Math.min(1, Math.abs(f.vx) / Math.max(120, this.rules.moveSpeed));
+        const strideRate = 0.044 + speedNorm * 0.016;
+        f.runPhase += Math.abs(f.vx) * dt * strideRate;
       }
     } else {
       f.vx *= Math.pow(0.18, dt);
@@ -1097,6 +1123,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         f.coyoteTimer = 0;
         f.jumpBufferTimer = 0;
         f.jumpsUsed = isDoubleJump ? f.maxJumps : 1;
+        f.takeoffTimer = isDoubleJump ? 0.14 : 0.13;
+        f.landingTimer = 0;
         if (isDoubleJump) {
           f.airSpinAngle = 0.01;
         }
@@ -1137,8 +1165,13 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     const prevVy = f.vy;
     f.vy += this.rules.gravity * dt;
     moveBodyWithTerrain(this.world.terrain, f, dt, f.dropThroughTimer > 0, 0);
-    if (!wasOnGround && f.onGround && prevVy > 260) {
-      this.spawnDustBurst(f.x, f.y, 4, '#94A3B8');
+    if (!wasOnGround && f.onGround && prevVy > 110) {
+      const strength = Math.min(1, Math.max(0.28, (prevVy - 100) / 560));
+      f.landingStrength = strength;
+      f.landingTimer = 0.14 + strength * 0.1;
+      if (prevVy > 240) {
+        this.spawnDustBurst(f.x, f.y, prevVy > 460 ? 6 : 4, '#94A3B8');
+      }
     }
 
     this.updateScarf(f, dt);

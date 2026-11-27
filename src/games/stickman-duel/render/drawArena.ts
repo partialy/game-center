@@ -16,13 +16,14 @@ import type {
   StickProjectile,
   StickWeaponKind,
 } from '../types';
+import {
+  blendStickmanPose,
+  computeTargetStickmanPose,
+  type StickmanPose,
+} from './stickmanPose';
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
 }
 
 interface Palette {
@@ -118,6 +119,8 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
   private dpr = 1;
   private debugMode = false;
   private elapsedVisual = 0;
+  private readonly poseCache = new Map<string, StickmanPose>();
+  private lastRoundNumber = -1;
 
   resize(cssWidth: number, cssHeight: number, dpr: number): void {
     this.cssWidth = Math.max(1, cssWidth);
@@ -130,7 +133,12 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
   }
 
   render(ctx: CanvasRenderingContext2D, world: StickmanWorld, realDtSeconds: number): void {
-    this.elapsedVisual += Math.min(0.05, Math.max(0, realDtSeconds));
+    const dt = Math.min(0.05, Math.max(0, realDtSeconds));
+    this.elapsedVisual += dt;
+    if (world.roundNumber !== this.lastRoundNumber) {
+      this.poseCache.clear();
+      this.lastRoundNumber = world.roundNumber;
+    }
     const palette = getPalette();
 
     ctx.save();
@@ -174,7 +182,7 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     this.drawPickups(ctx, world, palette);
     this.drawSlashes(ctx, world);
     this.drawProjectileTrails(ctx, world.projectileTrails);
-    this.drawFighters(ctx, world, palette);
+    this.drawFighters(ctx, world, palette, dt);
     this.drawProjectiles(ctx, world.projectiles);
     this.drawExplosions(ctx, world);
     this.drawLocalImpactWaves(ctx, world.impactWaves);
@@ -679,10 +687,11 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
   private drawFighters(
     ctx: CanvasRenderingContext2D,
     world: StickmanWorld,
-    palette: Palette
+    palette: Palette,
+    dtSeconds: number
   ): void {
     for (const f of world.fighters) {
-      this.drawSingleFighter(ctx, f, world.rules, palette);
+      this.drawSingleFighter(ctx, f, world.rules, palette, dtSeconds);
     }
   }
 
@@ -690,9 +699,14 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     ctx: CanvasRenderingContext2D,
     f: StickFighter,
     rules: StickmanDuelRules,
-    palette: Palette
+    palette: Palette,
+    dtSeconds: number
   ): void {
     ctx.save();
+
+    const targetPose = computeTargetStickmanPose(f, this.elapsedVisual, rules.moveSpeed);
+    const pose = blendStickmanPose(this.poseCache.get(f.slotId), targetPose, dtSeconds);
+    this.poseCache.set(f.slotId, pose);
 
     const invulnAlpha =
       f.alive && f.invulnTimer > 0
@@ -721,14 +735,15 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       impactScaleY = 1 + horizBias * deform * 0.85;
     }
 
-    // 脚底接触阴影（仅存活且贴近地面/空中柔和缩放）
+    // 脚底接触阴影（仅存活且贴近地面/空中柔和缩放，随落地缓冲与起跳自然呼吸）
     if (f.alive) {
       ctx.fillStyle = palette.dark ? 'rgba(0,0,0,0.42)' : 'rgba(28,33,39,0.18)';
       ctx.beginPath();
+      const shadowScale = f.onGround ? clamp(pose.poseScaleX, 0.85, 1.25) : 0.62;
       ctx.ellipse(
         f.x + localShakeX * 0.4,
         f.y + 1,
-        f.onGround ? 15 : 9,
+        15 * shadowScale,
         f.onGround ? 4 : 2.5,
         0,
         0,
@@ -770,6 +785,17 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     // 移动到角色锚点（脚底中心 + 人物局部受击抖动）
     ctx.translate(f.x + localShakeX, f.y + localShakeY);
 
+    // 动作弹性形变（落地缓冲以脚底为锚点避免离地悬浮；空中起跳以重心为锚点自然拉长）
+    if (Math.abs(pose.poseScaleX - 1) > 0.002 || Math.abs(pose.poseScaleY - 1) > 0.002) {
+      if (f.onGround) {
+        ctx.scale(pose.poseScaleX, pose.poseScaleY);
+      } else {
+        ctx.translate(0, -24);
+        ctx.scale(pose.poseScaleX, pose.poseScaleY);
+        ctx.translate(0, 24);
+      }
+    }
+
     if (impactScaleX !== 1 || impactScaleY !== 1) {
       ctx.translate(0, -24);
       ctx.scale(impactScaleX, impactScaleY);
@@ -786,7 +812,7 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
         ctx.globalAlpha = invulnAlpha;
       }
       if (!f.onGround && f.jumpsUsed >= 2 && Math.abs(f.airSpinAngle) > 0.01) {
-        // 二段跳空中翻滚
+        // 二段跳抱膝空中翻滚
         ctx.translate(0, -24);
         ctx.rotate(f.airSpinAngle);
         ctx.translate(0, 24);
@@ -796,242 +822,104 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     const isFlash = f.hitFlashTimer > 0;
     const bodyStroke = isFlash ? '#FFFFFF' : palette.stickStroke;
     const accent = isFlash ? '#FFFFFF' : f.config.colorHex;
-
-    // 计算核心关节点（局部坐标：原点为脚底中心，向上为 -Y）
-    const speedRatio = clamp(Math.abs(f.vx) / 260, 0, 1);
-    const breath = f.onGround && speedRatio < 0.15 ? Math.sin(this.elapsedVisual * 5 + f.x) * 1.4 : 0;
-
-    let hipX = 0;
-    let hipY = -20 + breath * 0.5;
-    let lean = f.facing * (0.1 + speedRatio * 0.24);
-    if (f.hitStunTimer > 0) {
-      lean = -f.facing * 0.42;
-      hipX = -f.facing * 4;
-    }
-
     const attack = f.attack;
-    const atkRatio = attack ? clamp(attack.elapsed / Math.max(0.01, attack.totalDuration), 0, 1) : 0;
-    const isActivePhase = attack
-      ? attack.elapsed >= attack.startup && attack.elapsed <= attack.activeEnd
-      : false;
-
-    if (attack?.kind === 'punch') {
-      lean = f.facing * (isActivePhase ? 0.46 : 0.24);
-    } else if (attack?.kind === 'kick') {
-      lean = -f.facing * (isActivePhase ? 0.34 : 0.16);
-      hipY -= isActivePhase ? 3 : 1;
-    } else if (attack?.kind === 'sword') {
-      lean = f.facing * (isActivePhase ? 0.5 : -0.18);
-    }
-
-    const shoulderX = hipX + Math.sin(lean) * 18;
-    const shoulderY = hipY - Math.cos(lean) * 18;
-    const headX = shoulderX + Math.sin(lean * 0.8) * 9;
-    const headY = shoulderY - 9.5;
-
-    // 腿部关节计算
-    let backKneeX: number;
-    let backKneeY: number;
-    let backFootX: number;
-    let backFootY: number;
-    let frontKneeX: number;
-    let frontKneeY: number;
-    let frontFootX: number;
-    let frontFootY: number;
-
-    if (attack?.kind === 'kick') {
-      const ext = isActivePhase ? 1 : atkRatio < 0.3 ? atkRatio / 0.3 : Math.max(0, 1 - (atkRatio - 0.55) / 0.45);
-      // 支撑腿
-      backKneeX = hipX - f.facing * 5;
-      backKneeY = hipY + 11;
-      backFootX = hipX - f.facing * 7;
-      backFootY = 0;
-      // 高位飞踢腿
-      const kickDirX = f.facing * 0.94;
-      const kickDirY = -0.34;
-      frontKneeX = hipX + kickDirX * (13 + ext * 7);
-      frontKneeY = hipY + kickDirY * (10 + ext * 5);
-      frontFootX = hipX + kickDirX * (18 + ext * 22);
-      frontFootY = hipY + kickDirY * (14 + ext * 16);
-    } else if (!f.onGround) {
-      // 空中微蜷跃姿
-      const rising = f.vy < 0;
-      backKneeX = hipX - f.facing * 8;
-      backKneeY = hipY + (rising ? 9 : 13);
-      backFootX = hipX - f.facing * 13;
-      backFootY = hipY + (rising ? 16 : 21);
-      frontKneeX = hipX + f.facing * 10;
-      frontKneeY = hipY + (rising ? 6 : 11);
-      frontFootX = hipX + f.facing * 6;
-      frontFootY = hipY + (rising ? 15 : 20);
-    } else if (speedRatio > 0.14) {
-      const s = Math.sin(f.runPhase);
-      const c = Math.cos(f.runPhase);
-      backKneeX = hipX - s * 11;
-      backKneeY = hipY + 10 - Math.max(0, -c) * 4;
-      backFootX = hipX - s * 15 - f.facing * 2;
-      backFootY = Math.min(0, -Math.max(0, -c) * 7);
-
-      frontKneeX = hipX + s * 11;
-      frontKneeY = hipY + 10 - Math.max(0, c) * 4;
-      frontFootX = hipX + s * 15 + f.facing * 2;
-      frontFootY = Math.min(0, -Math.max(0, c) * 7);
-    } else {
-      // 格斗戒备站姿
-      backKneeX = hipX - f.facing * 6;
-      backKneeY = hipY + 10;
-      backFootX = hipX - f.facing * 10;
-      backFootY = 0;
-      frontKneeX = hipX + f.facing * 7;
-      frontKneeY = hipY + 10;
-      frontFootX = hipX + f.facing * 10;
-      frontFootY = 0;
-    }
-
-    // 手臂与手持武器角度计算
-    let backElbowX = shoulderX - f.facing * 8;
-    let backElbowY = shoulderY + 7;
-    let backHandX = shoulderX - f.facing * 3;
-    let backHandY = shoulderY + 13;
-
-    let frontElbowX = shoulderX + f.facing * 9;
-    let frontElbowY = shoulderY + 6;
-    let frontHandX = shoulderX + f.facing * 16;
-    let frontHandY = shoulderY + 4 + breath * 0.4;
-
-    let weaponAngle = f.facing === 1 ? 0 : Math.PI;
-
-    if (
-      f.weapon &&
-      (f.weapon.kind === 'pistol' ||
-        f.weapon.kind === 'shotgun' ||
-        f.weapon.kind === 'rocket' ||
-        f.weapon.kind === 'grenade')
-    ) {
-      weaponAngle = Math.atan2(f.aimY, f.aimX);
-      const recoil = attack && isActivePhase ? -5 : 0;
-      const ux = Math.cos(weaponAngle);
-      const uy = Math.sin(weaponAngle);
-      frontElbowX = shoulderX + ux * (10 + recoil * 0.5);
-      frontElbowY = shoulderY + uy * (10 + recoil * 0.5) + 2;
-      frontHandX = shoulderX + ux * (19 + recoil);
-      frontHandY = shoulderY + uy * (19 + recoil);
-      backElbowX = shoulderX + ux * 6 - f.facing * 3;
-      backElbowY = shoulderY + uy * 6 + 5;
-      backHandX = shoulderX + ux * 13;
-      backHandY = shoulderY + uy * 13 + 2;
-    } else if (attack?.kind === 'sword') {
-      // 双手大弧度斩击
-      const startAng = f.facing === 1 ? -2.35 : Math.PI + 2.35;
-      const endAng = f.facing === 1 ? 0.95 : Math.PI - 0.95;
-      const swingT = clamp((atkRatio - 0.1) / 0.55, 0, 1);
-      const eased = 1 - Math.pow(1 - swingT, 3);
-      weaponAngle = lerp(startAng, endAng, eased);
-      frontElbowX = shoulderX + Math.cos(weaponAngle) * 11;
-      frontElbowY = shoulderY + Math.sin(weaponAngle) * 11;
-      frontHandX = shoulderX + Math.cos(weaponAngle) * 20;
-      frontHandY = shoulderY + Math.sin(weaponAngle) * 20;
-      backHandX = frontHandX - Math.cos(weaponAngle) * 3;
-      backHandY = frontHandY - Math.sin(weaponAngle) * 3;
-      backElbowX = (shoulderX + backHandX) * 0.5;
-      backElbowY = (shoulderY + backHandY) * 0.5 + 3;
-    } else if (attack?.kind === 'punch') {
-      const punchExt = isActivePhase ? 1 : atkRatio < 0.25 ? atkRatio / 0.25 : 0.2;
-      const yOff = attack.comboStep === 2 ? -6 : attack.comboStep === 1 ? 2 : -1;
-      frontElbowX = shoulderX + f.facing * (10 + punchExt * 8);
-      frontElbowY = shoulderY + 3 + yOff * 0.5;
-      frontHandX = shoulderX + f.facing * (15 + punchExt * 20);
-      frontHandY = shoulderY + yOff;
-      backElbowX = shoulderX - f.facing * 10;
-      backElbowY = shoulderY + 6;
-      backHandX = shoulderX - f.facing * 6;
-      backHandY = shoulderY + 11;
-    } else if (f.weapon?.kind === 'sword') {
-      // 持剑戒备姿势
-      weaponAngle = f.facing === 1 ? -0.58 : Math.PI + 0.58;
-      frontElbowX = shoulderX + f.facing * 9;
-      frontElbowY = shoulderY + 6;
-      frontHandX = shoulderX + f.facing * 16;
-      frontHandY = shoulderY + 4;
-    } else if (speedRatio > 0.14 && f.onGround) {
-      const s = Math.sin(f.runPhase);
-      frontElbowX = shoulderX + s * 10;
-      frontElbowY = shoulderY + 7;
-      frontHandX = shoulderX + s * 15 + f.facing * 3;
-      frontHandY = shoulderY + 3;
-      backElbowX = shoulderX - s * 10;
-      backElbowY = shoulderY + 7;
-      backHandX = shoulderX - s * 14;
-      backHandY = shoulderY + 5;
-    }
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // 彩色轮廓底描边，让火柴人在亮/暗背景和混战中都极高对比
-    const strokeSkeleton = (color: string, width: number) => {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = width;
+    const strokeLimbLayer = (drawPath: () => void, outerWidth: number, innerWidth: number) => {
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = outerWidth;
       ctx.beginPath();
-      // 后腿 & 后臂
-      ctx.moveTo(hipX, hipY);
-      ctx.lineTo(backKneeX, backKneeY);
-      ctx.lineTo(backFootX, backFootY);
-      ctx.moveTo(shoulderX, shoulderY);
-      ctx.lineTo(backElbowX, backElbowY);
-      ctx.lineTo(backHandX, backHandY);
-      // 躯干
-      ctx.moveTo(hipX, hipY);
-      ctx.lineTo(shoulderX, shoulderY);
-      // 前腿 & 前臂
-      ctx.moveTo(hipX, hipY);
-      ctx.lineTo(frontKneeX, frontKneeY);
-      ctx.lineTo(frontFootX, frontFootY);
-      ctx.moveTo(shoulderX, shoulderY);
-      ctx.lineTo(frontElbowX, frontElbowY);
-      ctx.lineTo(frontHandX, frontHandY);
+      drawPath();
+      ctx.stroke();
+
+      ctx.strokeStyle = bodyStroke;
+      ctx.lineWidth = innerWidth;
+      ctx.beginPath();
+      drawPath();
       ctx.stroke();
     };
 
-    // 1. 角色主题色外发光勾边
-    strokeSkeleton(accent, 6.4);
-    // 2. 清晰主骨架线条
-    strokeSkeleton(bodyStroke, 3.6);
+    // 分层绘制（后肢 -> 弯曲脊柱躯干 -> 前肢），让跑跳交叉动作具有清晰的前后景层次
+    strokeLimbLayer(
+      () => {
+        ctx.moveTo(pose.hip.x, pose.hip.y);
+        ctx.lineTo(pose.backKnee.x, pose.backKnee.y);
+        ctx.lineTo(pose.backFoot.x, pose.backFoot.y);
+        ctx.moveTo(pose.shoulder.x, pose.shoulder.y);
+        ctx.lineTo(pose.backElbow.x, pose.backElbow.y);
+        ctx.lineTo(pose.backHand.x, pose.backHand.y);
+      },
+      5.8,
+      3.1
+    );
 
-    // 头部（实心对比圆 + 玩家主题色头带/护目镜）
+    // 柔性二次贝塞尔脊柱躯干
+    strokeLimbLayer(
+      () => {
+        ctx.moveTo(pose.hip.x, pose.hip.y);
+        ctx.quadraticCurveTo(pose.spineMid.x, pose.spineMid.y, pose.shoulder.x, pose.shoulder.y);
+      },
+      6.5,
+      3.7
+    );
+
+    // 前腿与前臂（含攻击肢体，覆盖在躯干之前呈现立体武术轮廓）
+    strokeLimbLayer(
+      () => {
+        ctx.moveTo(pose.hip.x, pose.hip.y);
+        ctx.lineTo(pose.frontKnee.x, pose.frontKnee.y);
+        ctx.lineTo(pose.frontFoot.x, pose.frontFoot.y);
+        ctx.moveTo(pose.shoulder.x, pose.shoulder.y);
+        ctx.lineTo(pose.frontElbow.x, pose.frontElbow.y);
+        ctx.lineTo(pose.frontHand.x, pose.frontHand.y);
+      },
+      6.4,
+      3.6
+    );
+
+    // 头部（实心对比圆 + 随动作微倾的护目镜/头带亮条）
+    ctx.save();
+    ctx.translate(pose.head.x, pose.head.y);
+    ctx.rotate(pose.headTilt);
+
     ctx.fillStyle = bodyStroke;
     ctx.strokeStyle = accent;
     ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.arc(headX, headY, 7.6, 0, Math.PI * 2);
+    ctx.arc(0, 0, 7.6, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // 护目镜/头带亮条，指示朝向
+    // 护目镜/头带亮条，指示朝向与视线仰俯
     ctx.fillStyle = accent;
-    ctx.fillRect(
-      headX + (f.facing === 1 ? 0.5 : -6.5),
-      headY - 2.6,
-      6,
-      2.6
-    );
+    ctx.fillRect(f.facing === 1 ? 0.5 : -6.5, -2.6, 6, 2.6);
+    ctx.restore();
 
     // 出拳/踢腿打击残影亮点
-    if (attack?.kind === 'punch' && isActivePhase) {
+    if (attack?.kind === 'punch' && pose.isActiveStrike) {
       ctx.fillStyle = accent;
       ctx.beginPath();
-      ctx.arc(frontHandX, frontHandY, 5.2, 0, Math.PI * 2);
+      ctx.arc(pose.frontHand.x, pose.frontHand.y, 5.2, 0, Math.PI * 2);
       ctx.fill();
-    } else if (attack?.kind === 'kick' && isActivePhase) {
+    } else if (attack?.kind === 'kick' && pose.isActiveStrike) {
       ctx.fillStyle = accent;
       ctx.beginPath();
-      ctx.arc(frontFootX, frontFootY, 5.5, 0, Math.PI * 2);
+      ctx.arc(pose.frontFoot.x, pose.frontFoot.y, 5.5, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // 绘制手持武器
+    // 绘制手持武器（紧贴前手关节与程序化武器角度）
     if (f.weapon && f.alive) {
-      this.drawHeldWeapon(ctx, f.weapon.kind, frontHandX, frontHandY, weaponAngle, f.facing);
+      this.drawHeldWeapon(
+        ctx,
+        f.weapon.kind,
+        pose.frontHand.x,
+        pose.frontHand.y,
+        pose.weaponAngle,
+        f.facing
+      );
     }
 
     ctx.restore();
