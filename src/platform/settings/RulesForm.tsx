@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Input, Tabs } from '@heroui/react';
+import { Button, Input } from '@heroui/react';
 import {
   AlertCircle,
   AlertTriangle,
   BookmarkPlus,
   Check,
   Copy,
+  Crosshair,
   Dices,
+  Gauge,
+  Map as MapIcon,
+  Package,
   RotateCcw,
+  SlidersHorizontal,
+  Sparkles,
   Trash2,
+  Trophy,
 } from 'lucide-react';
 import type {
   GameDefinition,
@@ -16,8 +23,16 @@ import type {
   RulePreset,
   ValidationIssue,
 } from '../games/contracts';
+import { generateFreshStickmanMapCode } from '../../games/stickman-duel/rules';
 import { generateFreshMapCode } from '../../games/tank-battle/rules';
-import { AppSelect, AppSwitch, type SelectOptionItem } from '../ui/heroUiHelpers';
+import {
+  AppNumberStepper,
+  AppSelect,
+  AppSwitch,
+  PillSegmentedControl,
+  type SelectOptionItem,
+} from '../ui/heroUiHelpers';
+import { RuleFieldBadgeIcon } from './ruleFieldIcons';
 
 export interface RulePresetsPanelProps<TRules extends Record<string, unknown>> {
   presets: RulePreset<TRules>[];
@@ -31,7 +46,6 @@ export interface RulePresetsPanelProps<TRules extends Record<string, unknown>> {
 
 /**
  * HeroUI v3 命名规则预设工具栏（复用于赛前页与设置页「数据」分类）。
- * 切换规则预设仅替换规则草稿，绝不覆盖玩家姓名、涂装颜色或改键。
  */
 export function RulePresetsPanel<TRules extends Record<string, unknown>>({
   presets,
@@ -72,12 +86,12 @@ export function RulePresetsPanel<TRules extends Record<string, unknown>>({
   };
 
   return (
-    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 space-y-3.5">
-      <div className="flex flex-wrap items-center gap-2.5">
-        <div className="flex-1 min-w-[200px]">
+    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 space-y-3">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="flex-1 min-w-[180px]">
           <AppSelect
             ariaLabel="当前规则预设"
-            label="当前规则预设"
+            label="规则预设"
             testId="rule-preset-select"
             value={activePresetId ?? '__custom__'}
             options={presetOptions}
@@ -92,60 +106,60 @@ export function RulePresetsPanel<TRules extends Record<string, unknown>>({
           />
         </div>
 
-        <div className="flex items-end gap-2 self-end">
-          {activePresetId && (
-            <Button
-              variant="danger-soft"
-              size="sm"
-              aria-label="删除当前选中预设"
-              onPress={() => onDeletePreset(activePresetId)}
-              className="min-h-[40px] max-sm:min-h-[44px] whitespace-nowrap shrink-0"
-            >
-              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-              删除预设
-            </Button>
-          )}
+        <Button
+          variant="secondary"
+          size="sm"
+          onPress={() => {
+            onResetAllRules();
+            setPresetFeedback('已恢复默认规则');
+            window.setTimeout(() => setPresetFeedback(null), 2000);
+          }}
+          className="h-[38px] max-sm:h-[44px] px-3.5 !rounded-full whitespace-nowrap shrink-0 font-semibold"
+        >
+          <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+          重置默认
+        </Button>
+
+        {activePresetId && (
           <Button
-            variant="secondary"
+            variant="danger-soft"
             size="sm"
-            onPress={onResetAllRules}
-            className="min-h-[40px] max-sm:min-h-[44px] whitespace-nowrap shrink-0"
+            isIconOnly
+            aria-label="删除当前预设"
+            onPress={() => onDeletePreset(activePresetId)}
+            className="!w-[38px] !h-[38px] max-sm:!w-[44px] max-sm:!h-[44px] !min-w-[38px] !p-0 !rounded-full shrink-0"
           >
-            <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-            恢复全部默认
+            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
           </Button>
-        </div>
+        )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-[var(--separator)]">
+      <div className="flex flex-wrap items-center gap-2">
         <Input
           type="text"
-          value={newPresetName}
           maxLength={24}
-          placeholder="输入新预设名（如：快节奏激光战）"
-          aria-label="新规则预设名称"
+          value={newPresetName}
+          placeholder="输入新预设名称…"
+          aria-label="新预设名称"
           onChange={(e) => setNewPresetName(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              handleCreatePreset();
-            }
+            if (e.key === 'Enter') handleCreatePreset();
           }}
-          className="flex-1 min-w-[180px] min-h-[40px] max-sm:min-h-[44px] bg-[var(--field-background)] text-[var(--field-foreground)] border border-[var(--field-border)] rounded-lg px-3 text-xs"
+          className="flex-1 min-w-[160px] h-[38px] max-sm:h-[44px] px-3.5 text-xs bg-[var(--field-background)] text-[var(--field-foreground)] border border-[var(--field-border)] rounded-full"
         />
         <Button
           variant="primary"
           size="sm"
           onPress={handleCreatePreset}
-          className="min-h-[40px] max-sm:min-h-[44px] whitespace-nowrap shrink-0 accent-solid-btn"
+          className="h-[38px] max-sm:h-[44px] px-4 !rounded-full whitespace-nowrap shrink-0 font-bold accent-solid-btn"
         >
           <BookmarkPlus className="w-3.5 h-3.5" aria-hidden="true" />
-          保存为新预设
+          保存预设
         </Button>
       </div>
 
       {presetFeedback && (
-        <p role="status" className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+        <p className="text-xs font-medium text-[var(--accent)]" role="status">
           {presetFeedback}
         </p>
       )}
@@ -165,18 +179,39 @@ interface RulesFormProps<TRules extends Record<string, unknown>> {
   onDeletePreset: (presetId: string) => void;
   onResetAllRules: () => void;
   onResetGroupRules: (groupId: string) => void;
-  /** 仅显示指定规则分组（用于设置中心按 7 大模块拆分展示） */
   filterGroupIds?: string[];
-  /** 隐藏特定字段（例如操控模式已归入「操控」分类） */
   excludeFieldKeys?: string[];
-  /** 隐藏顶部标题行 */
   hideHeader?: boolean;
-  /** 隐藏预设工具栏（设置中心将预设集中到「数据」分类） */
   hidePresetBar?: boolean;
+  /** 宽屏每行列数（设置中心常用 3 列，赛前右侧窄栏用 2 列） */
+  columns?: 2 | 3;
+}
+
+function getGroupIcon(groupId: string) {
+  switch (groupId) {
+    case 'match':
+      return Trophy;
+    case 'map':
+      return MapIcon;
+    case 'combat':
+      return Crosshair;
+    case 'advanced':
+      return Gauge;
+    case 'drops':
+    case 'items':
+      return Package;
+    case 'special':
+      return Sparkles;
+    default:
+      return SlidersHorizontal;
+  }
 }
 
 /**
- * HeroUI v3 通用规则与命名预设编辑器（赛前页与设置页共用同一套表单与校验器）。
+ * 游戏 App 风格通用规则编辑器：
+ * - 数字输入全部升级为圆形 −/+ 步进器，兼顾手机点按与桌面键入
+ * - 分组切换与 2～3 项短选单统一采用药丸分段器
+ * - 去除冗余描述与多余副文案，保留清晰图标、数值与校验反馈
  */
 export function RulesForm<TRules extends Record<string, unknown>>({
   game,
@@ -194,6 +229,7 @@ export function RulesForm<TRules extends Record<string, unknown>>({
   excludeFieldKeys,
   hideHeader = false,
   hidePresetBar = false,
+  columns = 2,
 }: RulesFormProps<TRules>) {
   const excludedSet = useMemo(() => new Set(excludeFieldKeys ?? []), [excludeFieldKeys]);
 
@@ -210,7 +246,6 @@ export function RulesForm<TRules extends Record<string, unknown>>({
   );
   const [copiedMapCode, setCopiedMapCode] = useState(false);
 
-  // 当外部切换 filterGroupIds 时自动选中第一个可见分组
   useEffect(() => {
     if (availableGroups.length > 0 && !availableGroups.some((g) => g.id === selectedGroupId)) {
       setSelectedGroupId(availableGroups[0].id);
@@ -280,6 +315,17 @@ export function RulesForm<TRules extends Record<string, unknown>>({
   };
 
   const handleRerollMapCode = () => {
+    if (game.id === 'stickman-duel') {
+      const tpl = String(rules.mapTemplate ?? 'random') as
+        | 'random'
+        | 'twin_towers'
+        | 'stepped_ruins'
+        | 'sky_platforms'
+        | 'fortress_bunkers';
+      const fresh = generateFreshStickmanMapCode(tpl);
+      onChangeRules({ ...rules, mapCode: fresh } as TRules);
+      return;
+    }
     const cols = Number(rules.gridCols ?? 10);
     const rows = Number(rules.gridRows ?? 7);
     const extra = Number(rules.extraPassages ?? 8);
@@ -289,28 +335,29 @@ export function RulesForm<TRules extends Record<string, unknown>>({
 
   const errorCount = scopedIssues.filter((i) => i.severity === 'error').length;
   const warningCount = scopedIssues.filter((i) => i.severity === 'warning').length;
+  const GroupIcon = currentGroup ? getGroupIcon(currentGroup.id) : SlidersHorizontal;
+  const gridColsClass =
+    columns === 3
+      ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
+      : 'grid-cols-1 sm:grid-cols-2';
+  const fullWidthSpanClass = columns === 3 ? 'sm:col-span-2 lg:col-span-3' : 'sm:col-span-2';
 
   return (
-    <section aria-label="对局规则与预设" className="space-y-4">
+    <section aria-label="对局规则与预设" className="space-y-3.5">
       {!hideHeader && (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold tracking-tight text-[var(--foreground)]">
-              对局规则与预设
-            </h2>
-            <p className="text-xs text-[var(--muted)] mt-0.5">
-              切换预设仅影响规则，保留玩家名字、颜色与按键
-            </p>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-bold tracking-tight text-[var(--foreground)]">
+            对局规则
+          </h2>
           {hidePresetBar && (
             <Button
               variant="secondary"
               size="sm"
               onPress={onResetAllRules}
-              className="min-h-[38px] max-sm:min-h-[44px] whitespace-nowrap shrink-0"
+              className="h-8 px-3 !rounded-full whitespace-nowrap shrink-0"
             >
               <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-              恢复全部默认规则
+              恢复默认
             </Button>
           )}
         </div>
@@ -328,108 +375,105 @@ export function RulesForm<TRules extends Record<string, unknown>>({
         />
       )}
 
-      {/* 校验摘要 */}
+      {/* 校验摘要（仅出错或警告时出现） */}
       {(errorCount > 0 || warningCount > 0) && (
         <div
           role={errorCount > 0 ? 'alert' : 'status'}
-          className={`flex items-start gap-2.5 px-3.5 py-2.5 text-xs font-medium rounded-xl border ${
+          className={`flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-xl border ${
             errorCount > 0
               ? 'bg-red-500/10 border-red-500/35 text-red-700 dark:text-red-300'
               : 'bg-amber-500/12 border-amber-500/35 text-amber-800 dark:text-amber-300'
           }`}
         >
           {errorCount > 0 ? (
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+            <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
           ) : (
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+            <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
           )}
           <span>
             {errorCount > 0
-              ? `规则配置中有 ${errorCount} 项错误，修正后方可开始比赛。`
-              : `规则配置中有 ${warningCount} 项提醒，请确认参数符合预期。`}
+              ? `存在 ${errorCount} 项参数错误，修正后方可开战`
+              : `存在 ${warningCount} 项参数提醒`}
           </span>
         </div>
       )}
 
-      {/* HeroUI 分组标签栏（当包含多个分组时展示） */}
+      {/* 药丸形态分组切换器 */}
       {availableGroups.length > 1 && currentGroup && (
-        <Tabs
+        <PillSegmentedControl
+          ariaLabel="规则分组"
           selectedKey={currentGroup.id}
-          onSelectionChange={(key) => setSelectedGroupId(String(key))}
-          className="w-full"
-        >
-          <Tabs.ListContainer>
-            <Tabs.List
-              aria-label="规则分组"
-              className="bg-[var(--surface-secondary)] border border-[var(--border)] p-1 rounded-xl flex flex-wrap gap-1 w-full"
-            >
-              {availableGroups.map((group) => {
-                const groupErrors = errorCountByGroup.get(group.id) ?? 0;
-                return (
-                  <Tabs.Tab
-                    key={group.id}
-                    id={group.id}
-                    data-testid={`rules-group-tab-${group.id}`}
-                    className="!w-auto flex-none px-3 py-1.5 min-h-[36px] max-sm:min-h-[44px] text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1.5"
-                  >
-                    <span>{group.title}</span>
-                    {groupErrors > 0 && (
-                      <span className="text-red-600 dark:text-red-400 font-mono-num font-bold">
-                        ({groupErrors})
-                      </span>
-                    )}
-                    <Tabs.Indicator />
-                  </Tabs.Tab>
-                );
-              })}
-            </Tabs.List>
-          </Tabs.ListContainer>
-        </Tabs>
+          onChange={setSelectedGroupId}
+          options={availableGroups.map((group) => {
+            const groupErrors = errorCountByGroup.get(group.id) ?? 0;
+            const Icon = getGroupIcon(group.id);
+            return {
+              id: group.id,
+              label: group.title,
+              icon: <Icon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />,
+              testId: `rules-group-tab-${group.id}`,
+              badge:
+                groupErrors > 0 ? (
+                  <span className="text-red-600 dark:text-red-400 font-mono-num font-bold">
+                    ({groupErrors})
+                  </span>
+                ) : undefined,
+            };
+          })}
+        />
       )}
 
       {/* 当前分组字段面板 */}
       {currentGroup && (
-        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 sm:p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--separator)]">
-            <div>
-              <h3 className="text-sm font-bold text-[var(--foreground)]">
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-4 space-y-3.5">
+          <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-[var(--separator)]">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-7 h-7 rounded-lg bg-[var(--accent)]/12 text-[var(--accent)] flex items-center justify-center shrink-0">
+                <GroupIcon className="w-4 h-4" aria-hidden="true" />
+              </span>
+              <h3 className="text-sm font-bold text-[var(--foreground)] truncate">
                 {currentGroup.title}
               </h3>
-              {currentGroup.description && (
-                <p className="text-xs text-[var(--muted)] mt-0.5">
-                  {currentGroup.description}
-                </p>
-              )}
             </div>
             <Button
               variant="ghost"
               size="sm"
               onPress={() => onResetGroupRules(currentGroup.id)}
-              className="min-h-[36px] max-sm:min-h-[42px] text-xs font-semibold whitespace-nowrap shrink-0"
+              className="h-8 px-3 !rounded-full text-xs font-semibold whitespace-nowrap shrink-0"
             >
               <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
-              恢复本组默认
+              恢复默认
             </Button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
+          <div className={`grid ${gridColsClass} gap-3`}>
             {visibleFields.map((field) => {
               const fieldIssues = issuesByField.get(field.key) ?? [];
               const hasError = fieldIssues.some((i) => i.severity === 'error');
               const disabled = Boolean(field.isDisabled?.(rules));
               const value = rules[field.key];
               const isFullWidth = field.key === 'mapCode' || field.key === 'controlMode';
+              const usePillSelect =
+                field.type === 'select' &&
+                (field.options?.length ?? 0) >= 2 &&
+                (field.options?.length ?? 0) <= 3 &&
+                (field.options ?? []).every((opt) => opt.label.length <= 10);
 
               return (
                 <div
                   key={field.key}
-                  className={`${isFullWidth ? 'sm:col-span-2' : ''} space-y-1.5`}
+                  className={`${
+                    isFullWidth ? fullWidthSpanClass : ''
+                  } rounded-xl bg-[var(--surface-secondary)]/50 border border-[var(--border)] px-3 py-2.5 flex flex-col justify-center gap-2`}
                 >
                   {field.type === 'boolean' ? (
-                    <div className="flex items-center justify-between gap-3 px-3 py-1.5 min-h-[44px] bg-[var(--surface-secondary)]/65 border border-[var(--border)] rounded-lg">
-                      <span className="text-xs font-semibold text-[var(--foreground)]">
-                        {field.label}
-                      </span>
+                    <div className="flex items-center justify-between gap-3 min-h-[38px]">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <RuleFieldBadgeIcon fieldKey={field.key} disabled={disabled} />
+                        <span className="text-xs font-semibold text-[var(--foreground)] truncate">
+                          {field.label}
+                        </span>
+                      </div>
                       <AppSwitch
                         ariaLabel={field.label}
                         isSelected={Boolean(value)}
@@ -437,26 +481,53 @@ export function RulesForm<TRules extends Record<string, unknown>>({
                         onChange={(checked) => handleFieldUpdate(field, checked)}
                       />
                     </div>
+                  ) : usePillSelect ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <RuleFieldBadgeIcon fieldKey={field.key} disabled={disabled} />
+                        <span className="text-xs font-semibold text-[var(--foreground)] truncate">
+                          {field.label}
+                        </span>
+                      </div>
+                      <PillSegmentedControl
+                        ariaLabel={field.label}
+                        compact
+                        selectedKey={String(value ?? '')}
+                        onChange={(val) => handleFieldUpdate(field, val)}
+                        options={(field.options ?? []).map((opt) => ({
+                          id: opt.value,
+                          label: opt.label.replace('每回合随机出生点', '随机出生'),
+                        }))}
+                      />
+                    </div>
                   ) : field.type === 'select' ? (
-                    <AppSelect
-                      ariaLabel={field.label}
-                      label={field.label}
-                      testId={`rule-select-${field.key}`}
-                      value={String(value ?? '')}
-                      isDisabled={disabled}
-                      options={(field.options ?? []).map((opt) => ({
-                        value: opt.value,
-                        label: opt.label,
-                      }))}
-                      onChange={(val) => handleFieldUpdate(field, val)}
-                    />
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <RuleFieldBadgeIcon fieldKey={field.key} disabled={disabled} />
+                        <span className="text-xs font-semibold text-[var(--foreground)] truncate">
+                          {field.label}
+                        </span>
+                      </div>
+                      <AppSelect
+                        ariaLabel={field.label}
+                        testId={`rule-select-${field.key}`}
+                        value={String(value ?? '')}
+                        isDisabled={disabled}
+                        options={(field.options ?? []).map((opt) => ({
+                          value: opt.value,
+                          label: opt.label,
+                        }))}
+                        onChange={(val) => handleFieldUpdate(field, val)}
+                      />
+                    </div>
                   ) : field.type === 'string' ? (
                     <>
                       <label
                         htmlFor={`rule-${field.key}`}
-                        className="block text-xs font-semibold text-[var(--foreground)]"
+                        className="flex items-center gap-2 text-xs font-semibold text-[var(--foreground)]"
                       >
-                        {field.label}
+                        <RuleFieldBadgeIcon fieldKey={field.key} disabled={disabled} />
+                        <span className="truncate">{field.label}</span>
                       </label>
                       <div className="flex flex-wrap items-center gap-2">
                         <Input
@@ -464,31 +535,31 @@ export function RulesForm<TRules extends Record<string, unknown>>({
                           type="text"
                           value={String(value ?? '')}
                           disabled={disabled}
-                          placeholder={field.placeholder}
+                          placeholder="留空自动生成随机地图"
                           onChange={(e) => handleFieldUpdate(field, e.target.value)}
-                          className={`flex-1 min-w-[200px] min-h-[40px] max-sm:min-h-[44px] px-3 text-xs font-mono-num bg-[var(--field-background)] text-[var(--field-foreground)] border rounded-lg ${
+                          className={`flex-1 min-w-[180px] h-9 max-sm:h-11 px-3.5 text-xs font-mono-num bg-[var(--field-background)] text-[var(--field-foreground)] border rounded-full ${
                             hasError
                               ? 'border-red-500'
                               : 'border-[var(--field-border)]'
                           }`}
                         />
                         {field.key === 'mapCode' && (
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             <Button
                               variant="secondary"
                               size="sm"
                               onPress={handleRerollMapCode}
-                              className="min-h-[40px] max-sm:min-h-[44px] whitespace-nowrap"
+                              className="h-9 max-sm:h-11 px-3.5 !rounded-full whitespace-nowrap font-semibold"
                             >
-                              <Dices className="w-3.5 h-3.5" aria-hidden="true" />
-                              生成编号
+                              <Dices className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+                              随机
                             </Button>
                             <Button
                               variant="secondary"
                               size="sm"
                               isDisabled={!String(value ?? '').trim()}
                               onPress={handleCopyMapCode}
-                              className="min-h-[40px] max-sm:min-h-[44px] whitespace-nowrap"
+                              className="h-9 max-sm:h-11 px-3.5 !rounded-full whitespace-nowrap font-semibold"
                             >
                               {copiedMapCode ? (
                                 <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
@@ -503,51 +574,30 @@ export function RulesForm<TRules extends Record<string, unknown>>({
                     </>
                   ) : (
                     <>
-                      <div className="flex items-center justify-between gap-2">
-                        <label
-                          htmlFor={`rule-${field.key}`}
-                          className={`text-xs font-semibold ${
-                            disabled ? 'text-[var(--muted)] opacity-60' : 'text-[var(--foreground)]'
-                          }`}
-                        >
-                          {field.label}
-                        </label>
-                        {field.unit && (
-                          <span className="text-[11px] font-mono-num text-[var(--muted)]">
-                            {field.unit}
-                          </span>
-                        )}
-                      </div>
-                      <Input
+                      <label
+                        htmlFor={`rule-${field.key}`}
+                        className={`flex items-center gap-2 text-xs font-semibold min-w-0 ${
+                          disabled ? 'text-[var(--muted)] opacity-60' : 'text-[var(--foreground)]'
+                        }`}
+                      >
+                        <RuleFieldBadgeIcon fieldKey={field.key} disabled={disabled} />
+                        <span className="truncate">{field.label}</span>
+                      </label>
+                      <AppNumberStepper
                         id={`rule-${field.key}`}
-                        type="number"
-                        value={
-                          typeof value === 'number' && Number.isFinite(value)
-                            ? String(value)
-                            : ''
-                        }
+                        ariaLabel={field.label}
+                        testId={`rule-stepper-${field.key}`}
+                        value={typeof value === 'number' ? value : Number.NaN}
                         min={field.min}
                         max={field.max}
                         step={field.step ?? (field.type === 'integer' ? 1 : 0.1)}
-                        disabled={disabled}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          const parsed = raw === '' ? Number.NaN : Number(raw);
-                          handleFieldUpdate(field, parsed);
-                        }}
-                        className={`w-full min-h-[40px] max-sm:min-h-[44px] px-3 text-xs font-mono-num bg-[var(--field-background)] text-[var(--field-foreground)] border rounded-lg disabled:opacity-50 ${
-                          hasError
-                            ? 'border-red-500'
-                            : 'border-[var(--field-border)]'
-                        }`}
+                        integer={field.type === 'integer'}
+                        unit={field.unit}
+                        isDisabled={disabled}
+                        hasError={hasError}
+                        onChange={(next) => handleFieldUpdate(field, next)}
                       />
                     </>
-                  )}
-
-                  {field.helperText && fieldIssues.length === 0 && (
-                    <p className="text-[11px] text-[var(--muted)] leading-snug">
-                      {field.helperText}
-                    </p>
                   )}
 
                   {fieldIssues.map((iss, idx) => (

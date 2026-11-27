@@ -290,7 +290,11 @@ function EdgeAmmoItemStrip({
   align: 'left' | 'right';
 }) {
   const isRight = align === 'right';
-  const ammoPct = Math.round((player.ammo / Math.max(1, player.maxAmmo)) * 100);
+  const isHpGame = player.maxHp !== undefined;
+  const pct = isHpGame
+    ? Math.round(((player.hp ?? 0) / Math.max(1, player.maxHp ?? 100)) * 100)
+    : Math.round((player.ammo / Math.max(1, player.maxAmmo)) * 100);
+  const hpColor = pct > 55 ? '#22C55E' : pct > 28 ? '#F59E0B' : '#EF4444';
 
   return (
     <div
@@ -305,32 +309,42 @@ function EdgeAmmoItemStrip({
       >
         <span className="truncate max-w-[64px]">{player.displayName}</span>
         <span className="font-mono-num text-[#525C68]">
-          {player.ammo}/{player.maxAmmo}
+          {isHpGame ? `${player.hp ?? 0}/${player.maxHp}` : `${player.ammo}/${player.maxAmmo}`}
         </span>
       </div>
 
-      {/* 极细弹夹与补弹进度条 */}
+      {/* 血量或弹夹进度条 */}
       <div className="relative w-20 h-1.5 rounded-full bg-[#DFD9CA] overflow-hidden">
         <div
           className="h-full transition-[width] duration-75"
           style={{
-            width: `${ammoPct}%`,
-            backgroundColor: player.alive ? player.colorHex : '#88909A',
+            width: `${pct}%`,
+            backgroundColor: !player.alive ? '#88909A' : isHpGame ? hpColor : player.colorHex,
           }}
         />
-        {player.reloadProgress > 0 && player.ammo < player.maxAmmo && (
+        {!isHpGame && player.reloadProgress > 0 && player.ammo < player.maxAmmo && (
           <div
             className="absolute inset-y-0 left-0 opacity-45"
             style={{
-              width: `${Math.min(100, ammoPct + Math.round((player.reloadProgress * 100) / Math.max(1, player.maxAmmo)))}%`,
+              width: `${Math.min(100, pct + Math.round((player.reloadProgress * 100) / Math.max(1, player.maxAmmo)))}%`,
               backgroundColor: player.colorHex,
             }}
           />
         )}
       </div>
 
-      {/* 当前激活道具微缩贴片 */}
-      {player.statusItems.length > 0 && (
+      {/* 火柴人当前武器贴片 */}
+      {isHpGame && player.weaponKind && player.weaponLabel && (
+        <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#222830] text-white text-[9px] font-bold leading-none whitespace-nowrap">
+          <span>{player.weaponLabel}</span>
+          {player.weaponCount !== undefined && (
+            <span className="font-mono-num text-[#FCD34D]">{player.weaponCount}</span>
+          )}
+        </div>
+      )}
+
+      {/* 当前激活道具微缩贴片（坦克大战） */}
+      {!isHpGame && player.statusItems.length > 0 && (
         <div
           className={`flex flex-wrap gap-1 ${isRight ? 'justify-end' : 'justify-start'}`}
         >
@@ -377,7 +391,11 @@ function EdgeBrawlTile({
     config?.aiModelId === 'hellbringer';
   const hasFault =
     runtime && (runtime.state === 'timeout' || runtime.state === 'error');
-  const ammoPct = Math.round((entry.ammo / Math.max(1, entry.maxAmmo)) * 100);
+  const isHpGame = entry.maxHp !== undefined;
+  const barPct = isHpGame
+    ? Math.round(((entry.hp ?? 0) / Math.max(1, entry.maxHp ?? 100)) * 100)
+    : Math.round((entry.ammo / Math.max(1, entry.maxAmmo)) * 100);
+  const hpColor = barPct > 55 ? '#22C55E' : barPct > 28 ? '#F59E0B' : '#EF4444';
   const firstItem = entry.statusItems[0];
 
   return (
@@ -419,8 +437,8 @@ function EdgeBrawlTile({
         <div
           className="h-full"
           style={{
-            width: `${ammoPct}%`,
-            backgroundColor: entry.alive ? entry.colorHex : '#98A0AA',
+            width: `${barPct}%`,
+            backgroundColor: !entry.alive ? '#98A0AA' : isHpGame ? hpColor : entry.colorHex,
           }}
         />
       </div>
@@ -431,6 +449,16 @@ function EdgeBrawlTile({
         <span className="text-[9px] font-semibold text-[#B3261E]">
           {runtime.state === 'timeout' ? '超时' : '异常'}
         </span>
+      ) : isHpGame ? (
+        <div className="flex items-center justify-between gap-1 text-[9px] font-mono-num font-semibold truncate">
+          <span>{entry.hp ?? 0}HP</span>
+          {entry.weaponKind && entry.weaponLabel && (
+            <span className="truncate">
+              {entry.weaponLabel}
+              {entry.weaponCount ?? ''}
+            </span>
+          )}
+        </div>
       ) : firstItem ? (
         <div className="flex items-center gap-1 text-[9px] font-semibold truncate">
           {firstItem.iconKey && <TankItemIcon kind={firstItem.iconKey} className="w-2.5 h-2.5 shrink-0" />}

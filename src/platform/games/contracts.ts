@@ -239,6 +239,16 @@ export interface PlayerHudEntry {
   maxAmmo: number;
   /** 0..1 当前一发补弹进度，满弹为 0 */
   reloadProgress: number;
+  /** 可选血条制游戏生命值（如火柴人决斗） */
+  hp?: number;
+  maxHp?: number;
+  /** 可选当前手持武器信息（如剑/枪/火箭筒） */
+  weaponKind?: string | null;
+  weaponLabel?: string;
+  weaponCount?: number;
+  weaponMaxCount?: number;
+  /** 可选：角色附近可拾取/替换的武器提示 */
+  nearbyPickupLabel?: string | null;
   statusItems: HudStatusItem[];
 }
 
@@ -425,7 +435,17 @@ export type SoundEventKind =
   | 'round_draw'
   | 'countdown_tick'
   | 'countdown_go'
-  | 'match_win';
+  | 'match_win'
+  | 'stick_punch'
+  | 'stick_kick'
+  | 'stick_sword'
+  | 'stick_pistol'
+  | 'stick_rocket'
+  | 'stick_heal'
+  | 'stick_jump'
+  | 'stick_swap'
+  | 'stick_hit_heavy'
+  | 'stick_block_break';
 
 export interface SessionStepResult {
   roundResult?: RoundResultEvent;
@@ -488,6 +508,8 @@ export interface GameDefinition<TRules = Record<string, unknown>, TWorld = unkno
   finalizeMatchRules?: (rules: TRules, seed: number) => TRules;
   createSession(snapshot: MatchLaunchSnapshot<TRules>): GameSession<TWorld>;
   createRenderer(): GameRenderer<TWorld>;
+  /** 可选：虚拟手柄布局类型（默认单开火键，火柴人使用左摇杆+右ABXY） */
+  virtualGamepadLayout?: 'tank' | 'abxy';
   /** 可选：该游戏内置的 TypeScript AI 对手脚本模型列表 */
   botModels?: BotModelDefinition<TWorld>[];
   defaultBotModelId?: string;

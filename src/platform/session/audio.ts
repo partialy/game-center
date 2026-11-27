@@ -104,6 +104,44 @@ class ProceduralAudio {
         this.tone(ctx, now + 0.22, 'triangle', 783.99, 783.99, 0.14, 0.13);
         this.tone(ctx, now + 0.34, 'triangle', 1046.5, 1046.5, 0.32, 0.14);
         break;
+      case 'stick_punch':
+        this.tone(ctx, now, 'triangle', 220 * pitchJitter, 75, 0.07, 0.16);
+        this.noiseBurst(ctx, now, 0.05, 0.1);
+        break;
+      case 'stick_kick':
+        this.tone(ctx, now, 'sawtooth', 190 * pitchJitter, 58, 0.11, 0.2);
+        this.noiseBurst(ctx, now, 0.08, 0.14);
+        break;
+      case 'stick_sword':
+        this.tone(ctx, now, 'sawtooth', 880 * pitchJitter, 310, 0.11, 0.13);
+        this.tone(ctx, now + 0.015, 'triangle', 1320 * pitchJitter, 540, 0.09, 0.09);
+        break;
+      case 'stick_pistol':
+        this.tone(ctx, now, 'square', 460 * pitchJitter, 90, 0.08, 0.18);
+        this.noiseBurst(ctx, now, 0.075, 0.16);
+        break;
+      case 'stick_rocket':
+        this.tone(ctx, now, 'sawtooth', 160 * pitchJitter, 280, 0.18, 0.14);
+        this.noiseBurst(ctx, now, 0.18, 0.13);
+        break;
+      case 'stick_heal':
+        this.tone(ctx, now, 'sine', 523.25, 659.25, 0.1, 0.13);
+        this.tone(ctx, now + 0.08, 'sine', 659.25, 987.77, 0.14, 0.13);
+        break;
+      case 'stick_jump':
+        this.tone(ctx, now, 'sine', 240 * pitchJitter, 520 * pitchJitter, 0.085, 0.1);
+        break;
+      case 'stick_swap':
+        this.tone(ctx, now, 'triangle', 420 * pitchJitter, 680 * pitchJitter, 0.065, 0.11);
+        break;
+      case 'stick_hit_heavy':
+        this.tone(ctx, now, 'sawtooth', 145 * pitchJitter, 42, 0.14, 0.24);
+        this.noiseBurst(ctx, now, 0.11, 0.19);
+        break;
+      case 'stick_block_break':
+        this.tone(ctx, now, 'square', 130 * pitchJitter, 50, 0.12, 0.14);
+        this.noiseBurst(ctx, now, 0.14, 0.14);
+        break;
     }
   }
 

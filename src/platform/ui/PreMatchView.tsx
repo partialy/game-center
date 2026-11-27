@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Code2,
+  Gamepad2,
   Play,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -26,7 +27,7 @@ import {
 import { RulePresetsPanel, RulesForm } from '../settings/RulesForm';
 import { ArenaRosterPanel, validateArenaSeats } from './ArenaRosterPanel';
 import { PlayerSetupPanel, resolveSlotController } from './PlayerSetupPanel';
-import { AppSelect, ModeTabs, ThemeQuickToggle } from './heroUiHelpers';
+import { ModeTabs, PillSegmentedControl, ThemeQuickToggle } from './heroUiHelpers';
 
 interface PreMatchViewProps<TRules extends Record<string, unknown>> {
   game: GameDefinition<TRules, unknown>;
@@ -62,10 +63,10 @@ interface PreMatchViewProps<TRules extends Record<string, unknown>> {
 }
 
 /**
- * 对战备战台（赛前配置页）：
+ * 对战备战台（赛前配置页，与设置中心共享游戏化步进器、药丸分段器与双列战备卡）：
  * - 固定精简顶栏：圆形返回 + 标题 | 圆形主题、AI工坊、药丸模式分段器、开战主按钮
- * - 左侧主战席位区：P1/P2 对抗备战卡 或 2～8 席 AI 乱斗阵容
- * - 右侧精简核心规则区：规则预设 + 赛制/地图/操控三项核心配置 + 前往设置中心入口
+ * - 左侧主战席位区：P1/P2 双列战备卡 或 2～8 席乱斗双列编队
+ * - 右侧精简核心规则区：规则预设 + 药丸操控切换 + 赛制/地图圆形步进器 + 前往设置中心
  */
 export function PreMatchView<TRules extends Record<string, unknown>>({
   game,
@@ -137,15 +138,12 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
     : '开始比赛';
 
   const hasControlMode = typeof rules.controlMode === 'string';
-  const activeControlModeMeta = TANK_CONTROL_MODE_OPTIONS.find(
-    (opt) => opt.value === rules.controlMode
-  );
 
   return (
     <div className="min-h-full drafting-surface flex flex-col text-[var(--foreground)]">
-      {/* 精简统一顶栏：圆形返回 + 标题 | 圆形主题、AI工坊、药丸分段器、主开战按钮 */}
+      {/* 精简统一顶栏 */}
       <header className="sticky top-0 z-20 min-h-[56px] bg-[var(--surface)]/95 border-b border-[var(--border)] px-3 sm:px-6 py-2 flex items-center">
-        <div className="max-w-[1360px] w-full mx-auto flex flex-wrap items-center justify-between gap-2.5 sm:gap-4">
+        <div className="max-w-[1400px] w-full mx-auto flex flex-wrap items-center justify-between gap-2.5 sm:gap-4">
           <div className="flex items-center gap-2.5 min-w-0">
             <Button
               variant="secondary"
@@ -204,7 +202,7 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-[1360px] mx-auto px-3 sm:px-6 py-4 sm:py-5 space-y-4">
+      <main className="flex-1 w-full max-w-[1400px] mx-auto px-3 sm:px-6 py-4 sm:py-5 space-y-4">
         {storageNotice && (
           <div
             role="status"
@@ -221,11 +219,11 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
             className="flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400"
           >
             <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-            <span>开战前请先修正：{blockerReasons.join(' / ')}</span>
+            <span>请先修正：{blockerReasons.join(' / ')}</span>
           </div>
         )}
 
-        {/* 对战备战台双栏布局：左侧席位与阵营（7列），右侧规则预设 + 核心规则 + 设置跳转（5列） */}
+        {/* 对战备战台双栏布局：左侧双列战备卡（7列），右侧预设 + 药丸操控 + 圆形步进核心规则 + 设置入口（5列） */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           <section className="lg:col-span-7 min-w-0">
             {isBrawl ? (
@@ -265,7 +263,7 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
             )}
           </section>
 
-          <aside className="lg:col-span-5 min-w-0 space-y-4">
+          <aside className="lg:col-span-5 min-w-0 space-y-3.5">
             {/* 1. 规则预设 */}
             <RulePresetsPanel
               presets={presets}
@@ -277,58 +275,63 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
               onResetAllRules={onResetAllRules}
             />
 
-            {/* 2. 核心规则（操控模式 + 赛制/地图） */}
-            <div className="space-y-3">
-              {hasControlMode && (
-                <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-4 space-y-2">
-                  <AppSelect
-                    label="操控模式"
-                    ariaLabel="操控模式"
-                    testId="prematch-control-mode-select"
-                    value={String(rules.controlMode)}
-                    options={TANK_CONTROL_MODE_OPTIONS.map((opt) => ({
-                      value: opt.value,
-                      label: opt.label,
-                    }))}
-                    onChange={(mode) =>
-                      onChangeRules({ ...rules, controlMode: mode } as TRules)
-                    }
-                  />
-                  {activeControlModeMeta && (
-                    <p className="text-[11px] leading-relaxed text-[var(--muted)]">
-                      {activeControlModeMeta.description}
-                    </p>
-                  )}
+            {/* 2. 操控模式药丸切换 */}
+            {hasControlMode && (
+              <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-7 h-7 rounded-lg bg-[var(--accent)]/12 text-[var(--accent)] flex items-center justify-center shrink-0">
+                    <Gamepad2 className="w-4 h-4" aria-hidden="true" />
+                  </span>
+                  <span className="text-sm font-bold text-[var(--foreground)]">操控模式</span>
                 </div>
-              )}
+                <PillSegmentedControl
+                  ariaLabel="操控模式"
+                  compact
+                  selectedKey={String(rules.controlMode)}
+                  onChange={(mode) =>
+                    onChangeRules({ ...rules, controlMode: mode } as TRules)
+                  }
+                  options={[
+                    { id: 'intuitive', label: '直觉转向', testId: 'prematch-ctrl-intuitive' },
+                    { id: 'classic', label: '经典坦克', testId: 'prematch-ctrl-classic' },
+                  ]}
+                />
+              </div>
+            )}
 
-              <RulesForm
-                game={game}
-                rules={rules}
-                presets={presets}
-                activePresetId={activePresetId}
-                issues={ruleIssues}
-                filterGroupIds={['match', 'map']}
-                hideHeader
-                hidePresetBar
-                onChangeRules={onChangeRules}
-                onSelectPreset={onSelectPreset}
-                onSaveNewPreset={onSaveNewPreset}
-                onDeletePreset={onDeletePreset}
-                onResetAllRules={onResetAllRules}
-                onResetGroupRules={onResetGroupRules}
-              />
-            </div>
+            {/* 3. 核心赛制与地图（圆形步进器 + 药丸分组） */}
+            <RulesForm
+              game={game}
+              rules={rules}
+              presets={presets}
+              activePresetId={activePresetId}
+              issues={ruleIssues}
+              filterGroupIds={['match', 'map']}
+              columns={2}
+              hideHeader
+              hidePresetBar
+              onChangeRules={onChangeRules}
+              onSelectPreset={onSelectPreset}
+              onSaveNewPreset={onSaveNewPreset}
+              onDeletePreset={onDeletePreset}
+              onResetAllRules={onResetAllRules}
+              onResetGroupRules={onResetGroupRules}
+            />
 
-            {/* 3. 高级参数跳转入口 */}
-            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl px-4 py-3.5 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-[var(--foreground)]">
-                  更多高级参数
+            {/* 4. 更多高级参数跳转入口 */}
+            <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-7 h-7 rounded-lg bg-[var(--accent)]/12 text-[var(--accent)] flex items-center justify-center shrink-0">
+                  <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-[var(--foreground)] truncate">
+                    道具池与高级参数
+                  </div>
+                  <div className="text-[11px] text-[var(--muted)] truncate">
+                    道具军械 · 弹道 · 手感
+                  </div>
                 </div>
-                <p className="text-[11px] text-[var(--muted)] mt-0.5 truncate">
-                  道具池、弹道物理、移动手感与画质音效
-                </p>
               </div>
               <Button
                 variant="secondary"
@@ -337,7 +340,6 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
                 onPress={onOpenSettings}
                 className="h-9 px-3.5 !rounded-full font-semibold shrink-0 whitespace-nowrap"
               >
-                <SlidersHorizontal className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
                 设置中心
                 <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
               </Button>
@@ -348,19 +350,6 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
     </div>
   );
 }
-
-const TANK_CONTROL_MODE_OPTIONS = [
-  {
-    value: 'intuitive',
-    label: '直觉转向（推荐）',
-    description: '按方向键直接朝 8 个方向移动，炮口自动平滑跟随并可随时开火。',
-  },
-  {
-    value: 'classic',
-    label: '经典坦克',
-    description: '按车头朝向前进/倒车，左右键原地或行进间旋转车体。',
-  },
-];
 
 function resolveActionsForControlMode(
   actions: GameDefinition<Record<string, unknown>, unknown>['actions'],

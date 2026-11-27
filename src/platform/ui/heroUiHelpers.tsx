@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import {
   Button,
   Header,
+  Input,
   Label,
   ListBox,
   ListBoxSection,
@@ -10,9 +11,10 @@ import {
   Switch,
   Tabs,
 } from '@heroui/react';
-import { Bot, Moon, Sun, Swords, Users } from 'lucide-react';
+import { Bot, Minus, Moon, Plus, Sun, Swords, Users } from 'lucide-react';
 import type { GameMode } from '../games/contracts';
 import { useTheme } from '../theme/ThemeContext';
+import { stepNumericValue } from './numberStepperMath';
 
 export interface SelectOptionItem {
   value: string;
@@ -74,7 +76,7 @@ export function AppSelect({
       )}
       <Select.Trigger
         data-testid={testId}
-        className="min-h-[38px] max-sm:min-h-[44px] w-full bg-[var(--field-background)] text-[var(--field-foreground)] border border-[var(--field-border)] rounded-lg px-3 py-1.5 text-xs font-medium flex items-center justify-between gap-2 transition-colors hover:border-[var(--accent)]/60"
+        className="min-h-[38px] max-sm:min-h-[44px] w-full bg-[var(--field-background)] text-[var(--field-foreground)] border border-[var(--field-border)] rounded-xl px-3 py-1.5 text-xs font-medium flex items-center justify-between gap-2 transition-colors hover:border-[var(--accent)]/60"
       >
         <Select.Value className="truncate text-left">
           {({ defaultChildren }) => defaultChildren ?? placeholder}
@@ -129,7 +131,7 @@ interface AppSwitchProps {
 }
 
 /**
- * HeroUI v3 药丸开关（修复 Switch.Content 必须包裹 Switch.Control 才能响应点击的机制）：
+ * HeroUI v3 药丸开关（Switch.Content 包裹 Switch.Control 以完整响应点击）：
  * - 药丸轨道（rounded-full，44×24px）+ 圆形滑块（rounded-full，18×18px）
  * - 开启态同步全局强调色 --accent，关闭态保持高对比边框与轨道
  */
@@ -171,6 +173,198 @@ export function AppSwitch({
         )}
       </Switch.Content>
     </Switch>
+  );
+}
+
+interface AppNumberStepperProps {
+  id?: string;
+  ariaLabel: string;
+  value: number;
+  onChange: (next: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  integer?: boolean;
+  unit?: string;
+  isDisabled?: boolean;
+  hasError?: boolean;
+  size?: 'sm' | 'md';
+  testId?: string;
+}
+
+/**
+ * 游戏 App 风格圆形加减步进器：
+ * - 两侧为圆形 − / + 按钮（桌面 32px，移动端 40px 触控友好），中间支持直接键入精确数值
+ * - 自动按步长防浮点精度漂移并钳制 min/max 边界
+ */
+export function AppNumberStepper({
+  id,
+  ariaLabel,
+  value,
+  onChange,
+  min,
+  max,
+  step = 1,
+  integer = false,
+  unit,
+  isDisabled = false,
+  hasError = false,
+  size = 'md',
+  testId,
+}: AppNumberStepperProps) {
+  const safeStep = Number.isFinite(step) && step > 0 ? step : 1;
+  const isFiniteVal = typeof value === 'number' && Number.isFinite(value);
+  const atMin = isFiniteVal && typeof min === 'number' && value <= min + 1e-9;
+  const atMax = isFiniteVal && typeof max === 'number' && value >= max - 1e-9;
+
+  const isCompact = size === 'sm';
+  const btnClass = isCompact
+    ? '!w-7 !h-7 max-sm:!w-9 max-sm:!h-9 !min-w-[28px] max-sm:!min-w-[36px] !p-0 !rounded-full shrink-0'
+    : '!w-8 !h-8 max-sm:!w-10 max-sm:!h-10 !min-w-[32px] max-sm:!min-w-[40px] !p-0 !rounded-full shrink-0';
+
+  const handleStep = (deltaSteps: number) => {
+    if (isDisabled) return;
+    const next = stepNumericValue({
+      value,
+      deltaSteps,
+      step: safeStep,
+      min,
+      max,
+      integer,
+    });
+    onChange(next);
+  };
+
+  return (
+    <div
+      data-testid={testId}
+      className={`flex items-center gap-1.5 rounded-full border bg-[var(--field-background)] px-1 ${
+        isCompact ? 'h-9 max-sm:h-11' : 'h-10 max-sm:h-12'
+      } ${
+        hasError
+          ? 'border-red-500 ring-1 ring-red-500/25'
+          : 'border-[var(--field-border)] focus-within:border-[var(--accent)]'
+      } ${isDisabled ? 'opacity-50' : ''} transition-colors`}
+    >
+      <Button
+        variant="secondary"
+        size="sm"
+        isIconOnly
+        isDisabled={isDisabled || atMin}
+        data-testid={testId ? `${testId}-dec` : undefined}
+        aria-label={`减少 ${ariaLabel}`}
+        onPress={() => handleStep(-1)}
+        className={btnClass}
+      >
+        <Minus className={isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'} aria-hidden="true" />
+      </Button>
+
+      <div className="flex-1 min-w-0 flex items-center justify-center gap-1 px-1">
+        <Input
+          id={id}
+          aria-label={ariaLabel}
+          type="number"
+          inputMode={integer ? 'numeric' : 'decimal'}
+          value={isFiniteVal ? String(value) : ''}
+          min={min}
+          max={max}
+          step={safeStep}
+          disabled={isDisabled}
+          onChange={(e) => {
+            const raw = e.target.value;
+            const parsed = raw === '' ? Number.NaN : Number(raw);
+            onChange(parsed);
+          }}
+          className={`no-spin-input w-full min-w-[36px] text-center bg-transparent border-0 shadow-none outline-none focus:ring-0 p-0 font-mono-num font-bold text-[var(--field-foreground)] ${
+            isCompact ? 'text-xs' : 'text-sm'
+          }`}
+        />
+        {unit && (
+          <span className="text-[11px] font-medium text-[var(--muted)] whitespace-nowrap shrink-0 select-none">
+            {unit}
+          </span>
+        )}
+      </div>
+
+      <Button
+        variant="secondary"
+        size="sm"
+        isIconOnly
+        isDisabled={isDisabled || atMax}
+        data-testid={testId ? `${testId}-inc` : undefined}
+        aria-label={`增加 ${ariaLabel}`}
+        onPress={() => handleStep(1)}
+        className={btnClass}
+      >
+        <Plus className={isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'} aria-hidden="true" />
+      </Button>
+    </div>
+  );
+}
+
+export interface PillSegmentOption {
+  id: string;
+  label: string;
+  icon?: ReactNode;
+  badge?: ReactNode;
+  testId?: string;
+}
+
+interface PillSegmentedControlProps {
+  ariaLabel: string;
+  selectedKey: string;
+  onChange: (key: string) => void;
+  options: PillSegmentOption[];
+  fullWidth?: boolean;
+  compact?: boolean;
+  className?: string;
+}
+
+/**
+ * 全站统一药丸分段器（rounded-full 外壳 + 药丸滑块指示器），适用于模式、操控、主题、规则子分组等。
+ */
+export function PillSegmentedControl({
+  ariaLabel,
+  selectedKey,
+  onChange,
+  options,
+  fullWidth = false,
+  compact = false,
+  className = '',
+}: PillSegmentedControlProps) {
+  return (
+    <Tabs
+      selectedKey={selectedKey}
+      onSelectionChange={(key) => onChange(String(key))}
+      className={`${fullWidth ? 'w-full' : '!w-fit'} ${className}`}
+    >
+      <Tabs.ListContainer className={fullWidth ? 'w-full' : '!w-fit'}>
+        <Tabs.List
+          aria-label={ariaLabel}
+          className={`h-9 bg-[var(--surface-secondary)] border border-[var(--border)] p-0.5 !rounded-full ${
+            fullWidth ? 'w-full flex items-center' : '!w-fit inline-flex items-center'
+          }`}
+        >
+          {options.map((opt) => (
+            <Tabs.Tab
+              key={opt.id}
+              id={opt.id}
+              data-testid={opt.testId}
+              className={`${
+                fullWidth ? 'flex-1' : '!w-auto flex-none'
+              } ${
+                compact ? 'px-2.5' : 'px-3.5'
+              } !h-[30px] !rounded-full text-xs font-bold whitespace-nowrap inline-flex items-center justify-center gap-1.5`}
+            >
+              {opt.icon}
+              <span>{opt.label}</span>
+              {opt.badge}
+              <Tabs.Indicator className="!rounded-full" />
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+      </Tabs.ListContainer>
+    </Tabs>
   );
 }
 
@@ -243,44 +437,38 @@ export function ModeTabs({
   compact = false,
   className = '',
 }: ModeTabsProps) {
-  const tabClass = `${
-    compact ? 'px-2.5' : 'px-3.5'
-  } !h-[30px] !rounded-full text-xs font-bold whitespace-nowrap inline-flex items-center justify-center gap-1.5`;
-
   return (
-    <Tabs
+    <PillSegmentedControl
+      ariaLabel="切换游戏模式"
       selectedKey={gameMode}
-      onSelectionChange={(key) => {
-        const val = String(key);
+      compact={compact}
+      className={className}
+      onChange={(val) => {
         if (val === 'single' || val === 'multi' || val === 'brawl') {
           onChange(val);
         }
       }}
-      className={className}
-    >
-      <Tabs.ListContainer>
-        <Tabs.List
-          aria-label="切换游戏模式"
-          className="h-9 bg-[var(--surface-secondary)] border border-[var(--border)] p-0.5 !rounded-full inline-flex items-center"
-        >
-          <Tabs.Tab id="single" data-testid={`${testIdPrefix}-mode-single`} className={tabClass}>
-            <Bot className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            单人游戏
-            <Tabs.Indicator className="!rounded-full" />
-          </Tabs.Tab>
-          <Tabs.Tab id="multi" data-testid={`${testIdPrefix}-mode-multi`} className={tabClass}>
-            <Users className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            多人游戏
-            <Tabs.Indicator className="!rounded-full" />
-          </Tabs.Tab>
-          <Tabs.Tab id="brawl" data-testid={`${testIdPrefix}-mode-brawl`} className={tabClass}>
-            <Swords className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            AI 乱斗
-            <Tabs.Indicator className="!rounded-full" />
-          </Tabs.Tab>
-        </Tabs.List>
-      </Tabs.ListContainer>
-    </Tabs>
+      options={[
+        {
+          id: 'single',
+          label: '单人游戏',
+          icon: <Bot className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />,
+          testId: `${testIdPrefix}-mode-single`,
+        },
+        {
+          id: 'multi',
+          label: '多人游戏',
+          icon: <Users className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />,
+          testId: `${testIdPrefix}-mode-multi`,
+        },
+        {
+          id: 'brawl',
+          label: 'AI 乱斗',
+          icon: <Swords className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />,
+          testId: `${testIdPrefix}-mode-brawl`,
+        },
+      ]}
+    />
   );
 }
 

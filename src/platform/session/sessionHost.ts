@@ -361,11 +361,15 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
   }
 
   setVirtualFirePressed(pressed: boolean): void {
+    this.setVirtualActionPressed('fire', pressed, true);
+  }
+
+  setVirtualActionPressed(actionId: string, pressed: boolean, autoRepeat = false): void {
     if (this.paused || !this.primaryHumanSlotId) {
-      if (!pressed) this.virtualInput.setFirePressed(false);
+      if (!pressed) this.virtualInput.setActionPressed(actionId, false, autoRepeat);
       return;
     }
-    this.virtualInput.setFirePressed(pressed);
+    this.virtualInput.setActionPressed(actionId, pressed, autoRepeat);
   }
 
   setDebugMode(enabled: boolean): void {
@@ -466,23 +470,28 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
     if (!touchSlotId) {
       return kbFrame;
     }
-    const touchFire = this.virtualInput.sampleFireAction(nowMs);
+    const virtualActions = this.virtualInput.sampleAllActions(nowMs);
+    const hasVirtualActions = Object.keys(virtualActions).length > 0;
     const touchMove = this.virtualInput.getMoveVector();
 
-    if (!touchFire.held && !touchFire.justPressed && !touchFire.justReleased && !touchMove) {
+    if (!hasVirtualActions && !touchMove) {
       return kbFrame;
     }
 
     return {
       getAction(slotId: PlayerSlotId, actionId: string): ActionInputState {
         const kb = kbFrame.getAction(slotId, actionId);
-        if (slotId !== touchSlotId || actionId !== 'fire') {
+        if (slotId !== touchSlotId) {
+          return kb;
+        }
+        const virt = virtualActions[actionId];
+        if (!virt) {
           return kb;
         }
         return {
-          held: kb.held || touchFire.held,
-          justPressed: kb.justPressed || touchFire.justPressed,
-          justReleased: (kb.justReleased && !touchFire.held) || (touchFire.justReleased && !kb.held),
+          held: kb.held || virt.held,
+          justPressed: kb.justPressed || virt.justPressed,
+          justReleased: (kb.justReleased && !virt.held) || (virt.justReleased && !kb.held),
         };
       },
       getMoveVector(slotId: PlayerSlotId): AnalogMoveVector | null {
@@ -527,7 +536,9 @@ function computeHudSignature(hud: HudState): string {
   ];
   for (const p of hud.players) {
     parts.push(
-      `${p.slotId}:${p.score}:${p.alive ? 1 : 0}:${p.ammo}:${Math.round(p.reloadProgress * 20)}`
+      `${p.slotId}:${p.score}:${p.alive ? 1 : 0}:${p.ammo}:${Math.round(p.reloadProgress * 20)}:${
+        p.hp !== undefined ? Math.ceil(p.hp) : '-'
+      }/${p.maxHp ?? '-'}:${p.weaponKind ?? '-'}:${p.weaponCount ?? '-'}:${p.nearbyPickupLabel ?? '-'}`
     );
     for (const s of p.statusItems) {
       parts.push(

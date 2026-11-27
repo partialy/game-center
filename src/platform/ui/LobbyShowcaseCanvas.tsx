@@ -1,8 +1,14 @@
 import { useEffect, useRef } from 'react';
+import { stickmanDuelGame } from '../../games/stickman-duel';
+import { STICKMAN_BOT_MODELS } from '../../games/stickman-duel/ai/botScripts';
+import { StickmanDuelRenderer } from '../../games/stickman-duel/render/drawArena';
+import { getDefaultStickmanRules } from '../../games/stickman-duel/rules';
+import { StickmanDuelSession } from '../../games/stickman-duel/simulation/world';
 import { TankBattleRenderer } from '../../games/tank-battle/render/drawArena';
 import { getDefaultTankRules } from '../../games/tank-battle/rules';
 import { TankBattleSession } from '../../games/tank-battle/simulation/world';
 import { tankBattleGame } from '../../games/tank-battle';
+import type { ActionInputState, InputFrame } from '../games/contracts';
 import { createStaticInputFrame } from '../input/keyboard';
 import type { LobbyPreviewKind } from './lobbyReel';
 
@@ -27,6 +33,9 @@ export function LobbyShowcaseCanvas({ kind, title }: LobbyShowcaseCanvasProps) {
 
     if (kind === 'tank-battle') {
       return mountTankBattleDemo(canvas, ctx);
+    }
+    if (kind === 'stickman-duel') {
+      return mountStickmanDuelDemo(canvas, ctx);
     }
     return mountProceduralCosmicDemo(canvas, ctx, kind);
   }, [kind]);
@@ -157,10 +166,130 @@ function mountTankBattleDemo(
   };
 }
 
+function mountStickmanDuelDemo(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D
+): () => void {
+  const demoRules = {
+    ...getDefaultStickmanRules(),
+    countdownSeconds: 0,
+    targetScore: 99,
+    mapTemplate: 'twin_towers' as const,
+    firstDropDelaySeconds: 1.2,
+    dropIntervalMinSeconds: 3.5,
+    dropIntervalMaxSeconds: 5.5,
+  };
+
+  const session = new StickmanDuelSession({
+    gameId: 'stickman-duel',
+    rulesVersion: stickmanDuelGame.rulesVersion,
+    rules: demoRules,
+    players: [
+      {
+        slotId: 'p1',
+        displayName: 'BLADE',
+        rawName: 'BLADE',
+        colorHex: '#38BDF8',
+        bindings: stickmanDuelGame.defaultBindingsBySlot.p1,
+        controller: 'ai',
+      },
+      {
+        slotId: 'p2',
+        displayName: 'EMBER',
+        rawName: 'EMBER',
+        colorHex: '#F97316',
+        bindings: stickmanDuelGame.defaultBindingsBySlot.p2,
+        controller: 'ai',
+      },
+    ],
+    sessionSeed: 0x20261127,
+  });
+
+  const botModel = STICKMAN_BOT_MODELS[3] ?? STICKMAN_BOT_MODELS[0];
+  const p1Bot = botModel.createAgent(101);
+  const p2Bot = botModel.createAgent(202);
+  const renderer = new StickmanDuelRenderer();
+
+  const syncSize = () => {
+    const parent = canvas.parentElement;
+    if (!parent) return;
+    const rawW = parent.clientWidth || parent.getBoundingClientRect().width;
+    const rawH = parent.clientHeight || parent.getBoundingClientRect().height;
+    const w = Math.max(240, Math.floor(rawW));
+    const h = Math.max(180, Math.floor(rawH));
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const nextW = Math.round(w * dpr);
+    const nextH = Math.round(h * dpr);
+    if (canvas.width !== nextW || canvas.height !== nextH) {
+      canvas.width = nextW;
+      canvas.height = nextH;
+    }
+    renderer.resize(w, h, dpr);
+    renderer.render(ctx, session.getWorldState(), 0);
+  };
+
+  syncSize();
+  const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(syncSize) : null;
+  if (ro && canvas.parentElement) ro.observe(canvas.parentElement);
+
+  const IDLE: ActionInputState = { held: false, justPressed: false, justReleased: false };
+  const prevHeld: Record<string, Record<string, boolean>> = { p1: {}, p2: {} };
+
+  const buildSlotStates = (slotId: 'p1' | 'p2', intent: Record<string, boolean>) => {
+    const prev = prevHeld[slotId];
+    const next: Record<string, boolean> = {};
+    const states: Record<string, ActionInputState> = {};
+    const keys = new Set([...Object.keys(prev), ...Object.keys(intent)]);
+    for (const k of keys) {
+      const held = Boolean(intent[k]);
+      const was = Boolean(prev[k]);
+      if (held) next[k] = true;
+      states[k] = { held, justPressed: held && !was, justReleased: !held && was };
+    }
+    prevHeld[slotId] = next;
+    return states;
+  };
+
+  let rafId = 0;
+  let lastTs: number | null = null;
+  let acc = 0;
+
+  const loop = (ts: number) => {
+    if (lastTs === null) lastTs = ts;
+    const dt = Math.min(0.05, Math.max(0, (ts - lastTs) / 1000));
+    lastTs = ts;
+    acc += dt;
+
+    while (acc >= 1 / 60) {
+      const world = session.getWorldState();
+      const s1 = buildSlotStates('p1', p1Bot.decide(world, 'p1', 1 / 60));
+      const s2 = buildSlotStates('p2', p2Bot.decide(world, 'p2', 1 / 60));
+      const frame: InputFrame = {
+        getAction(slotId, actionId) {
+          if (slotId === 'p1') return s1[actionId] ?? IDLE;
+          if (slotId === 'p2') return s2[actionId] ?? IDLE;
+          return IDLE;
+        },
+      };
+      session.step(1 / 60, frame);
+      acc -= 1 / 60;
+    }
+
+    renderer.render(ctx, session.getWorldState(), dt);
+    rafId = window.requestAnimationFrame(loop);
+  };
+
+  rafId = window.requestAnimationFrame(loop);
+  return () => {
+    window.cancelAnimationFrame(rafId);
+    ro?.disconnect();
+  };
+}
+
 function mountProceduralCosmicDemo(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
-  kind: Exclude<LobbyPreviewKind, 'tank-battle'>
+  kind: Exclude<LobbyPreviewKind, 'tank-battle' | 'stickman-duel'>
 ): () => void {
   let width = 640;
   let height = 420;
@@ -212,9 +341,7 @@ function mountProceduralCosmicDemo(
       ctx.stroke();
     }
 
-    if (kind === 'stickman-duel') {
-      drawStickmanDuelDemo(ctx, width, height, t);
-    } else if (kind === 'orbital-pong') {
+    if (kind === 'orbital-pong') {
       drawOrbitalPongDemo(ctx, width, height, t, dt, pongState);
     } else {
       drawGravityLabyrinthDemo(ctx, width, height, t);
@@ -265,167 +392,6 @@ function mountProceduralCosmicDemo(
     window.cancelAnimationFrame(rafId);
     ro?.disconnect();
   };
-}
-
-function drawStickmanDuelDemo(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  h: number,
-  t: number
-): void {
-  const cx = w * 0.5;
-  const cy = h * 0.54;
-
-  // 浮空黑曜石平台
-  const platforms = [
-    { x: cx - 190, y: cy + 88, pw: 148, ph: 16, bob: Math.sin(t * 1.4) * 5 },
-    { x: cx + 42, y: cy + 88, pw: 148, ph: 16, bob: Math.cos(t * 1.3) * 5 },
-    { x: cx - 64, y: cy + 16, pw: 128, ph: 14, bob: Math.sin(t * 1.8 + 1) * 4 },
-  ];
-
-  for (const p of platforms) {
-    const py = p.y + p.bob;
-    ctx.fillStyle = '#151E34';
-    ctx.strokeStyle = 'rgba(125, 211, 252, 0.28)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.roundRect(p.x, py, p.pw, p.ph, 5);
-    ctx.fill();
-    ctx.stroke();
-
-    // 平台下方推进能量微光
-    ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
-    ctx.fillRect(p.x + 14, py + p.ph + 2, p.pw - 28, 3);
-  }
-
-  // 循环拼刀周期（3.2s 一轮：蓄势 -> 空中冲刺交锋 -> 格挡火花 -> 落地后撤）
-  const cycle = (t % 3.2) / 3.2;
-  const clash = Math.exp(-Math.pow((cycle - 0.5) / 0.11, 2));
-  const approach = Math.sin(cycle * Math.PI);
-
-  const p1X = cx - 125 + approach * 92;
-  const p1Y = cy + 68 - Math.sin(cycle * Math.PI) * 78;
-  const p2X = cx + 125 - approach * 92;
-  const p2Y = cy + 68 - Math.sin(cycle * Math.PI) * 74;
-
-  // 残影弧线
-  ctx.strokeStyle = 'rgba(56, 189, 248, 0.22)';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(cx - 130, cy + 52);
-  ctx.quadraticCurveTo(cx - 75, cy - 38, p1X, p1Y - 18);
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(245, 158, 11, 0.22)';
-  ctx.beginPath();
-  ctx.moveTo(cx + 130, cy + 52);
-  ctx.quadraticCurveTo(cx + 75, cy - 34, p2X, p2Y - 18);
-  ctx.stroke();
-
-  drawArticulatedStickman(ctx, p1X, p1Y, 1, '#38BDF8', '#E0F2FE', approach, t);
-  drawArticulatedStickman(ctx, p2X, p2Y, -1, '#F59E0B', '#FEF3C7', approach, t + 1.2);
-
-  // 交锋瞬间能量光环与飞溅火花
-  if (clash > 0.08) {
-    const midX = (p1X + p2X) * 0.5;
-    const midY = (p1Y + p2Y) * 0.5 - 24;
-    const ringR = 14 + (1 - clash) * 58;
-
-    ctx.save();
-    ctx.globalAlpha = clash * 0.9;
-    ctx.strokeStyle = '#F8FAFC';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.arc(midX, midY, ringR, 0, Math.PI * 2);
-    ctx.stroke();
-
-    for (let i = 0; i < 12; i += 1) {
-      const a = (i / 12) * Math.PI * 2 + t * 2;
-      const dist = 10 + (1 - clash) * 64 + (i % 3) * 10;
-      ctx.strokeStyle = i % 2 === 0 ? '#7DD3FC' : '#FCD34D';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(midX + Math.cos(a) * (dist * 0.45), midY + Math.sin(a) * (dist * 0.45));
-      ctx.lineTo(midX + Math.cos(a) * dist, midY + Math.sin(a) * dist);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-}
-
-function drawArticulatedStickman(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  facing: 1 | -1,
-  color: string,
-  bladeCore: string,
-  action: number,
-  t: number
-): void {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(facing, 1);
-
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 3.5;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  const lean = 0.24 + action * 0.22;
-  const hipY = -20;
-  const neckX = Math.sin(lean) * 22;
-  const neckY = hipY - Math.cos(lean) * 22;
-
-  // 头部
-  ctx.beginPath();
-  ctx.arc(neckX + 2, neckY - 9, 7.5, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // 躯干
-  ctx.beginPath();
-  ctx.moveTo(0, hipY);
-  ctx.lineTo(neckX, neckY);
-  ctx.stroke();
-
-  // 双腿动态步幅
-  const stride = Math.sin(t * 7) * 6 + action * 10;
-  ctx.beginPath();
-  ctx.moveTo(0, hipY);
-  ctx.lineTo(-10 - stride * 0.4, -4);
-  ctx.moveTo(0, hipY);
-  ctx.lineTo(10 + stride * 0.5, -2 - action * 6);
-  ctx.stroke();
-
-  // 手臂与能量光刃
-  const swingAngle = -0.9 + action * 1.15;
-  const handX = neckX + Math.cos(swingAngle) * 18;
-  const handY = neckY + 4 + Math.sin(swingAngle) * 18;
-  ctx.beginPath();
-  ctx.moveTo(neckX, neckY + 4);
-  ctx.lineTo(handX, handY);
-  ctx.stroke();
-
-  // 光刃外焰
-  const tipX = handX + Math.cos(swingAngle - 0.35) * 44;
-  const tipY = handY + Math.sin(swingAngle - 0.35) * 44;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 5;
-  ctx.globalAlpha = 0.45;
-  ctx.beginPath();
-  ctx.moveTo(handX, handY);
-  ctx.lineTo(tipX, tipY);
-  ctx.stroke();
-
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = bladeCore;
-  ctx.lineWidth = 2.2;
-  ctx.beginPath();
-  ctx.moveTo(handX, handY);
-  ctx.lineTo(tipX, tipY);
-  ctx.stroke();
-
-  ctx.restore();
 }
 
 function drawOrbitalPongDemo(

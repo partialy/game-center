@@ -3,10 +3,12 @@ import {
   AlertCircle,
   Bot,
   Code2,
+  Crown,
   Lock,
   Plus,
   Shuffle,
   Sparkles,
+  Swords,
   Trash2,
   User,
 } from 'lucide-react';
@@ -83,7 +85,7 @@ export function validateArenaSeats(seats: ArenaSeatConfig[]): {
 }
 
 /**
- * HeroUI v3 2～8 席多 AI 竞技场编队面板。
+ * 游戏 App 风格 2～8 席多 AI 乱斗编队面板（桌面双列紧凑席位卡网格）。
  */
 export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
   game,
@@ -188,77 +190,77 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
   const modelSelectGroups: SelectOptionGroup[] = [];
   if (customBotScripts.length > 0) {
     modelSelectGroups.push({
-      title: '自定义大模型脚本库',
+      title: '自定义脚本',
       options: customBotScripts.map((c) => ({
         value: `custom:${c.id}`,
-        label: `[自定义] ${c.name}（${c.tierLabel}${c.validation.status === 'verified' ? ' · 已校验' : ''}）`,
+        label: `[自定义] ${c.name} · ${c.tierLabel}`,
       })),
     });
   }
   modelSelectGroups.push({
-    title: '内置 TS 策略脚本',
+    title: '内置 AI',
     options: builtinModels.map((m) => ({
       value: `builtin:${m.id}`,
-      label: `[内置 Lv.${m.difficultyLevel}] ${m.name} · ${m.difficultyLabel}`,
+      label: `[Lv.${m.difficultyLevel}] ${m.name} · ${m.difficultyLabel}`,
     })),
   });
 
   return (
-    <section aria-label="多 AI 乱斗阵容编队" className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-base sm:text-lg font-bold tracking-tight text-[var(--foreground)]">
-            多 AI 乱斗阵容（<span className="font-mono-num">{seats.length}</span> 席）
-          </h2>
-          <p className="text-xs text-[var(--muted)] mt-0.5">
-            支持 2～{maxSeats} 席同台混战 · 可混搭大模型自定义脚本、内置模型及最多 2 名人类玩家
-          </p>
-        </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          data-testid="roster-open-studio-btn"
-          onPress={() => onOpenAiStudio('editor')}
-          className="min-h-[38px] max-sm:min-h-[44px] whitespace-nowrap shrink-0 font-semibold"
-        >
-          <Code2 className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
-          AI 脚本工坊（{customBotScripts.length}）
-        </Button>
-      </div>
+    <section aria-label="多 AI 乱斗阵容编队" className="space-y-3.5">
+      {/* 紧凑单行编队工具栏：标题 + 药丸规模切换 + 随机 / 加席 / AI工坊 */}
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-[var(--accent)]/12 text-[var(--accent)] flex items-center justify-center shrink-0">
+              <Swords className="w-4 h-4" aria-hidden="true" />
+            </span>
+            <h2 className="text-sm font-bold text-[var(--foreground)] whitespace-nowrap">
+              乱斗编队 · <span className="font-mono-num text-[var(--accent)]">{seats.length}</span> 席
+            </h2>
+          </div>
 
-      {/* 规模快捷预设 + 增席 + 随机填充 */}
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="inline-flex items-center p-0.5 rounded-full bg-[var(--surface-secondary)] border border-[var(--border)]">
+            {SEAT_PRESETS.filter((n) => n <= maxSeats).map((count) => {
+              const active = seats.length === count;
+              return (
+                <button
+                  key={count}
+                  type="button"
+                  data-testid={`brawl-preset-${count}`}
+                  onClick={() => handleSetCount(count)}
+                  className={`h-7 px-2.5 rounded-full text-xs font-mono-num font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                    active
+                      ? 'bg-[var(--accent)] text-[var(--accent-foreground)] shadow-xs'
+                      : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                  }`}
+                >
+                  {count}席
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-semibold text-[var(--muted)] mr-1">规模</span>
-          {SEAT_PRESETS.filter((n) => n <= maxSeats).map((count) => {
-            const active = seats.length === count;
-            return (
-              <Button
-                key={count}
-                size="sm"
-                variant={active ? 'primary' : 'secondary'}
-                data-testid={`brawl-preset-${count}`}
-                onPress={() => handleSetCount(count)}
-                className={`min-h-[36px] max-sm:min-h-[42px] px-2.5 font-mono-num font-bold ${
-                  active ? 'accent-solid-btn' : ''
-                }`}
-              >
-                {count} 席
-              </Button>
-            );
-          })}
-        </div>
-
-        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="roster-open-studio-btn"
+            onPress={() => onOpenAiStudio('editor')}
+            className="h-8 px-3 !rounded-full text-xs font-semibold whitespace-nowrap"
+          >
+            <Code2 className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+            工坊({customBotScripts.length})
+          </Button>
           <Button
             variant="secondary"
             size="sm"
             data-testid="brawl-randomize-btn"
             onPress={handleRandomizeRoster}
-            className="min-h-[36px] max-sm:min-h-[42px] whitespace-nowrap"
+            className="h-8 px-3 !rounded-full text-xs font-semibold whitespace-nowrap"
           >
             <Shuffle className="w-3.5 h-3.5" aria-hidden="true" />
-            随机多模型
+            随机
           </Button>
           <Button
             variant="primary"
@@ -266,7 +268,7 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
             data-testid="brawl-add-seat"
             isDisabled={seats.length >= maxSeats}
             onPress={handleAddSeat}
-            className="min-h-[36px] max-sm:min-h-[42px] whitespace-nowrap accent-solid-btn"
+            className="h-8 px-3 !rounded-full text-xs font-bold whitespace-nowrap accent-solid-btn"
           >
             <Plus className="w-3.5 h-3.5" aria-hidden="true" />
             加席
@@ -278,16 +280,15 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
       {needsLargerMap && onApplyRecommendedMapSize && (
         <div
           data-testid="brawl-map-recommend-banner"
-          className="flex flex-wrap items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl bg-amber-500/12 border border-amber-500/35 text-xs text-amber-800 dark:text-amber-300"
+          className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-amber-500/12 border border-amber-500/35 text-xs text-amber-800 dark:text-amber-300"
         >
           <div className="flex items-center gap-2 min-w-0">
             <Sparkles className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span>
-              当前为 <strong className="font-mono-num">{seats.length}</strong> 席混战，建议地图尺寸至少{' '}
+              <strong className="font-mono-num">{seats.length}</strong> 席建议尺寸{' '}
               <strong className="font-mono-num">
                 {recommendedCols}×{recommendedRows}
-              </strong>{' '}
-              以保证走位与出生空间。
+              </strong>
             </span>
           </div>
           <Button
@@ -295,9 +296,9 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
             variant="primary"
             data-testid="brawl-apply-map-btn"
             onPress={() => onApplyRecommendedMapSize(recommendedCols, recommendedRows)}
-            className="min-h-[34px] whitespace-nowrap shrink-0 accent-solid-btn"
+            className="h-7 px-3 !rounded-full whitespace-nowrap shrink-0 accent-solid-btn"
           >
-            一键套用 {recommendedCols}×{recommendedRows}
+            套用 {recommendedCols}×{recommendedRows}
           </Button>
         </div>
       )}
@@ -305,15 +306,15 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
       {!validation.valid && (
         <div
           role="alert"
-          className="flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium rounded-xl bg-red-500/10 border border-red-500/35 text-red-700 dark:text-red-300"
+          className="flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-xl bg-red-500/10 border border-red-500/35 text-red-700 dark:text-red-300"
         >
           <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-          <span>请确保所有席位涂装颜色互不重复且名称合法（最多支持 2 名人类玩家同屏）。</span>
+          <span>请确保涂装不重复且名称合法（最多 2 名玩家）。</span>
         </div>
       )}
 
-      {/* 席位卡片列表 */}
-      <div className="space-y-3">
+      {/* 桌面双列席位卡网格 */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
         {seats.map((seat, idx) => {
           const takenByOthers = new Set(
             seats
@@ -341,6 +342,10 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
             seat.aiSource === 'builtin'
               ? builtinModels.find((m) => m.id === seat.aiModelId) ?? builtinModels[0] ?? null
               : null;
+          const isBoss =
+            seat.controller === 'ai' &&
+            seat.aiSource === 'builtin' &&
+            Boolean(matchedBuiltin && (matchedBuiltin.isBoss || matchedBuiltin.difficultyLevel === 5));
 
           const fallbackPlaceholder =
             seat.controller === 'human'
@@ -351,106 +356,86 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
             <div
               key={seat.slotId}
               data-testid={`brawl-seat-card-${seat.slotId}`}
-              className="bg-[var(--surface)] border border-[var(--border)] rounded-xl p-3.5 space-y-3"
+              style={
+                isBoss
+                  ? {
+                      borderColor: BOSS_TIER_THEME.borderHex,
+                    }
+                  : undefined
+              }
+              className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-3 space-y-2.5"
             >
-              {/* 顶行：席位序号 + 身份切换 + 删除 */}
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className="w-6 h-6 rounded-md text-white font-mono-num text-[11px] font-extrabold flex items-center justify-center shrink-0"
-                    style={{ backgroundColor: seat.colorHex }}
+              {/* 顶行：序号色块 + 同行名称输入 + 药丸 AI/玩家切换 + 删除 */}
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-7 h-7 rounded-full text-white font-mono-num text-xs font-extrabold flex items-center justify-center shrink-0 shadow-xs"
+                  style={{ backgroundColor: seat.colorHex }}
+                >
+                  {idx + 1}
+                </span>
+
+                <Input
+                  type="text"
+                  maxLength={16}
+                  data-testid={`brawl-seat-name-${seat.slotId}`}
+                  value={seat.name}
+                  placeholder={fallbackPlaceholder}
+                  aria-label={`${seat.slotId.toUpperCase()} 选手名称`}
+                  onChange={(e) =>
+                    handleUpdateSeat(seat.slotId, { name: e.target.value })
+                  }
+                  className={`flex-1 min-w-0 h-8 max-sm:h-10 px-2.5 text-xs font-bold bg-[var(--field-background)] text-[var(--field-foreground)] border rounded-full ${
+                    nameError ? 'border-red-500' : 'border-[var(--field-border)]'
+                  }`}
+                />
+
+                <div className="inline-flex items-center p-0.5 bg-[var(--surface-secondary)] border border-[var(--border)] rounded-full shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateSeat(seat.slotId, { controller: 'ai' })}
+                    className={`h-6 px-2 rounded-full text-[11px] font-bold inline-flex items-center gap-1 transition-colors cursor-pointer ${
+                      seat.controller === 'ai'
+                        ? 'bg-[var(--accent)] text-[var(--accent-foreground)]'
+                        : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                    }`}
                   >
-                    {idx + 1}
-                  </span>
-                  <span className="text-xs font-bold text-[var(--foreground)]">
-                    席位 {seat.slotId.toUpperCase()}
-                  </span>
-                  {seat.controller === 'ai' && seat.aiSource === 'custom' && (
-                    <span className="text-[10px] font-bold text-[var(--accent)]">
-                      Worker 沙箱脚本
-                    </span>
-                  )}
-                  {seat.controller === 'ai' &&
-                    seat.aiSource === 'builtin' &&
-                    builtinModels.some(
-                      (m) => m.id === seat.aiModelId && (m.isBoss || m.difficultyLevel === 5)
-                    ) && (
-                      <span
-                        data-testid={`brawl-boss-badge-${seat.slotId}`}
-                        className="px-1.5 py-0.5 rounded text-[10px] font-bold border"
-                        style={{
-                          backgroundColor: BOSS_TIER_THEME.bgHex,
-                          borderColor: BOSS_TIER_THEME.borderHex,
-                          color: BOSS_TIER_THEME.textHex,
-                        }}
-                      >
-                        Lv.5 · 地狱使者
-                      </span>
-                    )}
+                    <Bot className="w-3 h-3" aria-hidden="true" />
+                    AI
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canBeHuman}
+                    onClick={() => handleUpdateSeat(seat.slotId, { controller: 'human' })}
+                    className={`h-6 px-2 rounded-full text-[11px] font-bold inline-flex items-center gap-1 transition-colors ${
+                      seat.controller === 'human'
+                        ? 'bg-[var(--accent)] text-[var(--accent-foreground)] cursor-pointer'
+                        : canBeHuman
+                        ? 'text-[var(--muted)] hover:text-[var(--foreground)] cursor-pointer'
+                        : 'text-[var(--muted)] opacity-40 cursor-not-allowed'
+                    }`}
+                  >
+                    <User className="w-3 h-3" aria-hidden="true" />
+                    玩家
+                  </button>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <div className="flex items-center gap-1 p-0.5 bg-[var(--surface-secondary)] border border-[var(--border)] rounded-lg">
-                    <Button
-                      size="sm"
-                      variant={seat.controller === 'ai' ? 'primary' : 'ghost'}
-                      onPress={() => handleUpdateSeat(seat.slotId, { controller: 'ai' })}
-                      className={`h-7 px-2 text-[11px] font-semibold ${
-                        seat.controller === 'ai' ? 'accent-solid-btn' : ''
-                      }`}
-                    >
-                      <Bot className="w-3 h-3" aria-hidden="true" />
-                      AI
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={seat.controller === 'human' ? 'primary' : 'ghost'}
-                      isDisabled={!canBeHuman}
-                      onPress={() => handleUpdateSeat(seat.slotId, { controller: 'human' })}
-                      className={`h-7 px-2 text-[11px] font-semibold ${
-                        seat.controller === 'human' ? 'accent-solid-btn' : ''
-                      }`}
-                    >
-                      <User className="w-3 h-3" aria-hidden="true" />
-                      玩家
-                    </Button>
-                  </div>
-
-                  {seats.length > 2 && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      isIconOnly
-                      aria-label={`移除席位 ${seat.slotId.toUpperCase()}`}
-                      onPress={() => handleRemoveSeat(seat.slotId)}
-                      className="min-w-[32px] h-8 text-[var(--muted)] hover:text-red-500"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    </Button>
-                  )}
-                </div>
+                {seats.length > 2 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    isIconOnly
+                    aria-label={`移除席位 ${seat.slotId.toUpperCase()}`}
+                    onPress={() => handleRemoveSeat(seat.slotId)}
+                    className="!w-7 !h-7 !min-w-[28px] !p-0 !rounded-full text-[var(--muted)] hover:text-red-500 shrink-0"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  </Button>
+                )}
               </div>
 
-              {/* 中行：名称输入 + HeroUI Select 模型选择 */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                <div className="sm:col-span-5">
-                  <Input
-                    type="text"
-                    maxLength={16}
-                    data-testid={`brawl-seat-name-${seat.slotId}`}
-                    value={seat.name}
-                    placeholder={fallbackPlaceholder}
-                    aria-label={`${seat.slotId.toUpperCase()} 选手名称`}
-                    onChange={(e) =>
-                      handleUpdateSeat(seat.slotId, { name: e.target.value })
-                    }
-                    className={`w-full min-h-[40px] max-sm:min-h-[44px] px-3 text-xs bg-[var(--field-background)] text-[var(--field-foreground)] border rounded-lg ${
-                      nameError ? 'border-red-500' : 'border-[var(--field-border)]'
-                    }`}
-                  />
-                </div>
-
-                <div className="sm:col-span-7">
+              {/* 中行：AI 模型下拉 或 玩家键位复用 */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
                   {seat.controller === 'ai' ? (
                     <AppSelect
                       ariaLabel={`${seat.slotId.toUpperCase()} 选择 AI 模型`}
@@ -476,14 +461,29 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                       }}
                     />
                   ) : (
-                    <div className="min-h-[40px] flex items-center px-3 py-1.5 text-[11px] font-medium text-[var(--muted)] bg-[var(--surface-secondary)] border border-[var(--border)] rounded-lg">
-                      复用本地键盘配置：{humanOrdinal === 1 ? 'P1 键位（WASD + 空格）' : 'P2 键位（方向键 + Enter）'}
+                    <div className="h-[38px] flex items-center px-3 text-xs font-semibold text-[var(--muted)] bg-[var(--surface-secondary)] border border-[var(--border)] rounded-xl truncate">
+                      {humanOrdinal === 1 ? 'P1 键位（WASD · 空格）' : 'P2 键位（方向键 · Enter）'}
                     </div>
                   )}
                 </div>
+
+                {isBoss && (
+                  <span
+                    data-testid={`brawl-boss-badge-${seat.slotId}`}
+                    className="inline-flex items-center gap-1 px-2 h-8 rounded-full text-[11px] font-bold border shrink-0 whitespace-nowrap"
+                    style={{
+                      backgroundColor: BOSS_TIER_THEME.bgHex,
+                      borderColor: BOSS_TIER_THEME.borderHex,
+                      color: BOSS_TIER_THEME.textHex,
+                    }}
+                  >
+                    <Crown className="w-3 h-3 text-[#FB7185]" aria-hidden="true" />
+                    Boss
+                  </span>
+                )}
               </div>
 
-              {/* 底行：8 色涂装选择 */}
+              {/* 底行：8 色圆形涂装点 */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-1.5">
                   {PLAYER_COLOR_PALETTE.map((opt) => {
@@ -499,20 +499,20 @@ export function ArenaRosterPanel<TRules extends Record<string, unknown>>({
                         onClick={() =>
                           handleUpdateSeat(seat.slotId, { colorHex: opt.hex })
                         }
-                        className={`w-6 h-6 rounded-md flex items-center justify-center transition-transform ${
+                        className={`w-5 h-5 max-sm:w-6 max-sm:h-6 rounded-full flex items-center justify-center transition-transform ${
                           selected
-                            ? 'ring-2 ring-offset-1 ring-[var(--foreground)] ring-offset-[var(--surface)] scale-105'
+                            ? 'ring-2 ring-offset-1 ring-[var(--foreground)] ring-offset-[var(--surface)] scale-110'
                             : taken
-                            ? 'opacity-30 cursor-not-allowed'
-                            : 'hover:scale-105 cursor-pointer'
+                            ? 'opacity-25 cursor-not-allowed'
+                            : 'hover:scale-110 cursor-pointer'
                         }`}
                         style={{ backgroundColor: opt.hex }}
                       >
                         {taken && (
-                          <Lock className="w-3 h-3 text-white drop-shadow" aria-hidden="true" />
+                          <Lock className="w-2.5 h-2.5 text-white drop-shadow" aria-hidden="true" />
                         )}
                         {selected && !taken && (
-                          <span className="w-2 h-2 rounded-xs bg-white/95" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-white" />
                         )}
                       </button>
                     );

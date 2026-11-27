@@ -96,6 +96,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 隐藏数字输入框原生上下小箭头，交由圆形 +- 步进器统一控制 */
+.no-spin-input::-webkit-outer-spin-button,
+.no-spin-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.no-spin-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* 自适应浅色 / 深色模式的细网格表面 */
 .drafting-surface {
   background-color: var(--background);

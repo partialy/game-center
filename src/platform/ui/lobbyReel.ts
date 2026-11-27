@@ -128,6 +128,29 @@ export function buildLobbyCatalog(
       };
     }
 
+    if (game.id === 'stickman-duel') {
+      return {
+        id: game.id,
+        title: game.name,
+        englishSubtitle: 'Astral Stickman Duel',
+        statusText: '现已可玩',
+        playable: true,
+        metaItems: ['2–8 席格斗', '可破坏地形', 'ABXY 虚拟手柄'],
+        description:
+          '在底层基岩、可炸毁堆叠砖块与单向短平台构成的 2D 竞技场中展开硬核火柴人血条对决。左拳/上腿/下跳/右换武器，抢夺长剑、手枪、火箭筒与血包一决高下。',
+        highlights: [
+          { label: '武器军械', value: '8 耐久长剑、3 发直线手枪、炸地形火箭筒与 25% 血包' },
+          { label: '操控方式', value: '键盘双人同屏 + 摇杆/ABXY 虚拟手柄模式，支持 8 向瞄准与二段跳穿台' },
+          { label: '对战模式', value: '单人 5 档 AI（含 Boss）、双人同屏与多席乱斗全面支持' },
+        ],
+        controlsSummary: '实机演算 · P1 WASD+JKL/空格 · 支持 ABXY 虚拟手柄',
+        thumbnailUrl: STICKMAN_THUMB,
+        fallbackGradient: 'linear-gradient(135deg, #0E1F45 0%, #1C1338 55%, #3B2314 100%)',
+        accentHex: '#38BDF8',
+        previewKind: 'stickman-duel',
+      };
+    }
+
     return {
       id: game.id,
       title: game.name,

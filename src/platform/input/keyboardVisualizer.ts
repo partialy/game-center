@@ -130,6 +130,14 @@ export interface KeyCaptureTarget {
 
 export function abbreviateActionLabel(actionId: string, label: string): string {
   if (actionId === 'fire') return '开火';
+  if (actionId === 'attack') return '拳/武';
+  if (actionId === 'kick') return '飞踢';
+  if (actionId === 'jump') return '跳跃';
+  if (actionId === 'swap') return '换武';
+  if (actionId === 'moveLeft') return '左';
+  if (actionId === 'moveRight') return '右';
+  if (actionId === 'aimUp') return '上';
+  if (actionId === 'aimDown') return '下';
   if (label === '向上') return '上';
   if (label === '向下') return '下';
   if (label === '向左') return '左';
@@ -242,6 +250,10 @@ export interface CompactMatchKeyHint {
   rightKey: string;
   fireKey: string;
   moveModeLabel: string;
+  isFighter?: boolean;
+  kickKey?: string;
+  jumpKey?: string;
+  swapKey?: string;
 }
 
 /** 将对局快照中的玩家绑定格式化为对局内紧凑键帽提示 */
@@ -250,6 +262,21 @@ export function buildCompactMatchKeyHint(
   controlMode?: unknown
 ): CompactMatchKeyHint {
   const b = player.bindings ?? {};
+  const isFighter = Boolean(b.attack || b.kick || b.jump);
+  if (isFighter) {
+    return {
+      upKey: formatKeyCode(b.aimUp ?? ''),
+      downKey: formatKeyCode(b.aimDown ?? ''),
+      leftKey: formatKeyCode(b.moveLeft ?? ''),
+      rightKey: formatKeyCode(b.moveRight ?? ''),
+      fireKey: formatKeyCode(b.attack ?? ''),
+      kickKey: formatKeyCode(b.kick ?? ''),
+      jumpKey: formatKeyCode(b.jump ?? ''),
+      swapKey: formatKeyCode(b.swap ?? ''),
+      moveModeLabel: '移动瞄准',
+      isFighter: true,
+    };
+  }
   return {
     upKey: formatKeyCode(b.forward ?? ''),
     downKey: formatKeyCode(b.backward ?? ''),

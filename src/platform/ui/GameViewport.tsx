@@ -6,6 +6,7 @@ import {
   Check,
   Copy,
   Eye,
+  Gamepad2,
   LogOut,
   Maximize2,
   Minimize2,
@@ -35,6 +36,7 @@ import { useMobileViewport } from '../mobile/MobileViewportContext';
 import { DevPerfOverlay } from './DevPerfOverlay';
 import { MobileArenaHud } from './MobileArenaHud';
 import { VirtualControls } from './VirtualControls';
+import { VirtualGamepadAbxy } from './VirtualGamepadAbxy';
 import { AppSlider } from './heroUiHelpers';
 import { ITEM_ACCENT_COLORS, TankItemIcon } from '../../games/tank-battle/ui/itemIcons';
 import type { ItemKind } from '../../games/tank-battle/types';
@@ -87,6 +89,7 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
     exitFullscreen,
   } = useMobileViewport();
   const [editingFireLayout, setEditingFireLayout] = useState(false);
+  const [desktopGamepadEnabled, setDesktopGamepadEnabled] = useState(false);
 
   const onMatchFinishedRef = useRef(onMatchFinished);
   onMatchFinishedRef.current = onMatchFinished;
@@ -247,11 +250,19 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
     : undefined;
   const primaryActiveItemKind =
     primaryHumanHud?.statusItems.find((item) => item.tone !== 'shield')?.iconKey ?? null;
-  const showVirtualControls =
+  const isAbxyGamepadGame = game.virtualGamepadLayout === 'abxy';
+  const showTankVirtualControls =
+    !isAbxyGamepadGame &&
     isMobileOrTablet &&
     Boolean(primaryHumanConfig) &&
     !settingsOverlayOpen &&
     (!paused || editingFireLayout);
+  const showAbxyGamepad =
+    isAbxyGamepadGame &&
+    (isMobileOrTablet || desktopGamepadEnabled) &&
+    Boolean(primaryHumanConfig) &&
+    !settingsOverlayOpen &&
+    !paused;
 
   useEffect(() => {
     if (!paused || settingsOverlayOpen) {
@@ -323,8 +334,8 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
           />
         )}
 
-        {/* 移动端单人虚拟摇杆与可调位置开火大按钮 */}
-        {showVirtualControls && (
+        {/* 移动端单人虚拟摇杆与可调位置开火大按钮（坦克大战） */}
+        {showTankVirtualControls && (
           <VirtualControls
             playerColorHex={primaryHumanConfig?.colorHex}
             activeItemKind={primaryActiveItemKind}
@@ -336,6 +347,22 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
             onFireButtonPosChange={setFireButtonPos}
             onResetFireButtonPos={() => setFireButtonPos(null)}
             onDoneEditingLayout={() => setEditingFireLayout(false)}
+          />
+        )}
+
+        {/* 火柴人决斗专属：左摇杆 + 右 ABXY 手柄虚拟按键层（移动端默认开启，桌面端可随时切换） */}
+        {showAbxyGamepad && (
+          <VirtualGamepadAbxy
+            playerColorHex={primaryHumanConfig?.colorHex}
+            weaponKind={primaryHumanHud?.weaponKind ?? null}
+            weaponLabel={primaryHumanHud?.weaponLabel}
+            weaponCount={primaryHumanHud?.weaponCount}
+            nearbyPickupLabel={primaryHumanHud?.nearbyPickupLabel ?? null}
+            opacityPercent={isMobileOrTablet ? virtualControlsOpacity : Math.max(55, virtualControlsOpacity)}
+            onMoveStickChange={(x, y, mag) => hostRef.current?.setVirtualMoveStick(x, y, mag)}
+            onActionChange={(actionId, pressed) =>
+              hostRef.current?.setVirtualActionPressed(actionId, pressed, false)
+            }
           />
         )}
 
@@ -417,8 +444,22 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                 </div>
               )}
 
-              {isMobileOrTablet && !isAiSpectate && (
+              {(isMobileOrTablet || isAbxyGamepadGame) && !isAiSpectate && (
                 <div className="px-3.5 py-3 bg-[var(--surface-secondary)] border border-[var(--border)] rounded-xl space-y-3">
+                  {isAbxyGamepadGame && !isMobileOrTablet && (
+                    <Button
+                      variant={desktopGamepadEnabled ? 'primary' : 'secondary'}
+                      size="sm"
+                      fullWidth
+                      onPress={() => setDesktopGamepadEnabled((v) => !v)}
+                      className={`min-h-[40px] font-semibold !rounded-full ${
+                        desktopGamepadEnabled ? 'accent-solid-btn' : ''
+                      }`}
+                    >
+                      <Gamepad2 className="w-4 h-4" aria-hidden="true" />
+                      {desktopGamepadEnabled ? '关闭虚拟手柄（ABXY）' : '开启虚拟手柄模式（ABXY）'}
+                    </Button>
+                  )}
                   <AppSlider
                     label="虚拟按键透明度"
                     value={virtualControlsOpacity}
@@ -428,16 +469,18 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     unit="%"
                     onChange={setVirtualControlsOpacity}
                   />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    fullWidth
-                    onPress={() => setEditingFireLayout(true)}
-                    className="min-h-[42px] font-semibold !rounded-full"
-                  >
-                    <Move className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
-                    拖动调整开火按钮位置
-                  </Button>
+                  {!isAbxyGamepadGame && isMobileOrTablet && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth
+                      onPress={() => setEditingFireLayout(true)}
+                      className="min-h-[42px] font-semibold !rounded-full"
+                    >
+                      <Move className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+                      拖动调整开火按钮位置
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -514,9 +557,12 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     cfg?.controller === 'ai' &&
                     cfg?.aiSource !== 'custom' &&
                     cfg?.aiModelId === 'hellbringer';
-                  const ammoPct = Math.round(
-                    (entry.ammo / Math.max(1, entry.maxAmmo)) * 100
-                  );
+                  const isHpGame = entry.maxHp !== undefined;
+                  const barPct = isHpGame
+                    ? Math.round(((entry.hp ?? 0) / Math.max(1, entry.maxHp ?? 100)) * 100)
+                    : Math.round((entry.ammo / Math.max(1, entry.maxAmmo)) * 100);
+                  const hpBarColor =
+                    barPct > 55 ? '#22C55E' : barPct > 28 ? '#F59E0B' : '#EF4444';
                   const humanKeyHint =
                     cfg?.controller === 'human'
                       ? buildCompactMatchKeyHint(cfg, controlMode)
@@ -574,7 +620,9 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                       >
                         <span className="truncate font-mono-num">
                           {humanKeyHint
-                            ? `${humanKeyHint.upKey}${humanKeyHint.leftKey}${humanKeyHint.downKey}${humanKeyHint.rightKey}·${humanKeyHint.fireKey}`
+                            ? humanKeyHint.isFighter
+                              ? `${humanKeyHint.leftKey}${humanKeyHint.rightKey}·${humanKeyHint.fireKey}/${humanKeyHint.kickKey}/${humanKeyHint.jumpKey}`
+                              : `${humanKeyHint.upKey}${humanKeyHint.leftKey}${humanKeyHint.downKey}${humanKeyHint.rightKey}·${humanKeyHint.fireKey}`
                             : cfg?.aiSource === 'custom'
                             ? cfg.aiModelName ?? 'Worker'
                             : isBoss
@@ -585,6 +633,13 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                           <span className="text-red-500 font-semibold shrink-0">淘汰</span>
                         ) : runtime && (runtime.state === 'timeout' || runtime.state === 'error') ? (
                           <span className="text-red-500 font-semibold shrink-0">异常</span>
+                        ) : isHpGame ? (
+                          <span className="font-mono-num shrink-0 font-semibold">
+                            {entry.weaponLabel && entry.weaponKind
+                              ? `${entry.weaponLabel}${entry.weaponCount ?? ''} · `
+                              : ''}
+                            {entry.hp ?? 0}HP
+                          </span>
                         ) : entry.statusItems[0] ? (
                           <span className="text-[var(--accent)] font-semibold shrink-0 truncate max-w-[54px]">
                             {entry.statusItems[0].label}
@@ -600,8 +655,12 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                         <div
                           className="h-full"
                           style={{
-                            width: `${ammoPct}%`,
-                            backgroundColor: entry.alive ? entry.colorHex : '#98A0AA',
+                            width: `${barPct}%`,
+                            backgroundColor: !entry.alive
+                              ? '#98A0AA'
+                              : isHpGame
+                              ? hpBarColor
+                              : entry.colorHex,
                           }}
                         />
                       </div>
@@ -651,6 +710,21 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                 </div>
 
                 <div className="flex items-center gap-1">
+                  {isAbxyGamepadGame && Boolean(primaryHumanConfig) && (
+                    <Button
+                      variant={desktopGamepadEnabled ? 'primary' : 'secondary'}
+                      size="sm"
+                      isIconOnly
+                      data-testid="toggle-virtual-gamepad-btn"
+                      onPress={() => setDesktopGamepadEnabled((v) => !v)}
+                      aria-label={desktopGamepadEnabled ? '关闭虚拟手柄' : '开启虚拟手柄'}
+                      className={`!w-8 !h-8 !min-w-[32px] !p-0 !rounded-full ${
+                        desktopGamepadEnabled ? 'accent-solid-btn' : ''
+                      }`}
+                    >
+                      <Gamepad2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    </Button>
+                  )}
                   <Button
                     variant="secondary"
                     size="sm"
@@ -759,6 +833,21 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     </button>
                   )}
                   <div className="flex items-center gap-1">
+                    {isAbxyGamepadGame && Boolean(primaryHumanConfig) && (
+                      <Button
+                        variant={desktopGamepadEnabled ? 'primary' : 'secondary'}
+                        size="sm"
+                        isIconOnly
+                        data-testid="toggle-virtual-gamepad-btn"
+                        onPress={() => setDesktopGamepadEnabled((v) => !v)}
+                        aria-label={desktopGamepadEnabled ? '关闭虚拟手柄' : '开启虚拟手柄'}
+                        className={`!w-7 !h-7 !min-w-[28px] !p-0 !rounded-full ${
+                          desktopGamepadEnabled ? 'accent-solid-btn' : ''
+                        }`}
+                      >
+                        <Gamepad2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      </Button>
+                    )}
                     <Button
                       variant="secondary"
                       size="sm"
@@ -922,7 +1011,11 @@ function BottomPlayerHudStrip({
             <span
               data-testid={`${slotPrefix}-key-hints`}
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--surface-secondary)] border border-[var(--border)] text-[10px] font-mono-num text-[var(--muted)] whitespace-nowrap shrink-0"
-              title={`移动：${keyHint.upKey}/${keyHint.leftKey}/${keyHint.downKey}/${keyHint.rightKey}，开火：${keyHint.fireKey}`}
+              title={
+                keyHint.isFighter
+                  ? `移动/瞄准：${keyHint.upKey}${keyHint.leftKey}${keyHint.downKey}${keyHint.rightKey}，拳/武：${keyHint.fireKey}，腿：${keyHint.kickKey}，跳：${keyHint.jumpKey}，换：${keyHint.swapKey}`
+                  : `移动：${keyHint.upKey}/${keyHint.leftKey}/${keyHint.downKey}/${keyHint.rightKey}，开火：${keyHint.fireKey}`
+              }
             >
               <span className="text-[var(--foreground)] font-semibold">
                 {keyHint.upKey}
@@ -931,12 +1024,16 @@ function BottomPlayerHudStrip({
                 {keyHint.rightKey}
               </span>
               <span className="opacity-45">·</span>
-              <span
-                className="font-bold"
-                style={{ color: player.colorHex }}
-              >
-                {keyHint.fireKey}
-              </span>
+              {keyHint.isFighter ? (
+                <span className="font-bold text-[var(--foreground)]">
+                  <span style={{ color: player.colorHex }}>{keyHint.fireKey}拳</span>{' '}
+                  {keyHint.kickKey}腿 {keyHint.jumpKey}跳 {keyHint.swapKey}换
+                </span>
+              ) : (
+                <span className="font-bold" style={{ color: player.colorHex }}>
+                  {keyHint.fireKey}
+                </span>
+              )}
             </span>
           ) : null}
 
@@ -947,92 +1044,145 @@ function BottomPlayerHudStrip({
           )}
         </div>
 
-        {/* 第二行：弹夹格子/进度条 + 弹药计数 + 激活道具胶囊 */}
-        <div
-          className={`flex items-center gap-2 min-w-0 ${
-            isRight ? 'flex-row-reverse' : 'flex-row'
-          }`}
-        >
+        {/* 第二行：血条制游戏显示 HP 进度条 + 武器胶囊；坦克大战保留原弹夹格子与道具 */}
+        {player.maxHp !== undefined ? (
           <div
-            className={`flex items-center gap-0.5 shrink-0 ${
+            className={`flex items-center gap-2 min-w-0 ${
               isRight ? 'flex-row-reverse' : 'flex-row'
             }`}
           >
-            {showPips ? (
-              Array.from({ length: player.maxAmmo }).map((_, idx) => {
-                const filled = idx < player.ammo;
-                const isReloadingPip = idx === player.ammo && player.reloadProgress > 0;
-                return (
-                  <div
-                    key={idx}
-                    className="relative w-2.5 h-1.5 rounded-[2px] bg-[var(--surface-secondary)] overflow-hidden border border-[var(--border)]"
-                  >
-                    {filled && (
-                      <div
-                        className="absolute inset-0"
-                        style={{ backgroundColor: player.colorHex }}
-                      />
-                    )}
-                    {isReloadingPip && (
-                      <div
-                        className="absolute inset-y-0 left-0 opacity-60"
-                        style={{
-                          width: `${Math.round(player.reloadProgress * 100)}%`,
-                          backgroundColor: player.colorHex,
-                        }}
-                      />
-                    )}
+            {(() => {
+              const hp = Math.max(0, player.hp ?? 0);
+              const maxHp = Math.max(1, player.maxHp);
+              const pct = Math.round((hp / maxHp) * 100);
+              const barColor = pct > 55 ? '#22C55E' : pct > 28 ? '#F59E0B' : '#EF4444';
+              return (
+                <>
+                  <div className="w-28 sm:w-36 h-2 rounded-full bg-[var(--surface-secondary)] overflow-hidden border border-[var(--border)] shrink-0">
+                    <div
+                      className="h-full transition-[width] duration-100"
+                      style={{
+                        width: `${pct}%`,
+                        backgroundColor: player.alive ? barColor : '#98A0AA',
+                      }}
+                    />
                   </div>
-                );
-              })
+                  <span className="text-[10px] font-mono-num font-bold text-[var(--foreground)] whitespace-nowrap shrink-0">
+                    {hp}/{maxHp}
+                  </span>
+                </>
+              );
+            })()}
+
+            {player.weaponKind && player.weaponLabel ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--surface-secondary)] border border-[var(--border)] text-[10px] font-bold text-[var(--foreground)] whitespace-nowrap shrink-0 leading-none">
+                <span>{player.weaponLabel}</span>
+                {player.weaponCount !== undefined && (
+                  <span className="font-mono-num text-[var(--accent)]">
+                    {player.weaponCount}
+                    {player.weaponMaxCount ? `/${player.weaponMaxCount}` : ''}
+                  </span>
+                )}
+              </span>
             ) : (
-              <div className="w-24 h-1.5 rounded-full bg-[var(--surface-secondary)] overflow-hidden border border-[var(--border)]">
-                <div
-                  className="h-full"
-                  style={{
-                    width: `${Math.round((player.ammo / Math.max(1, player.maxAmmo)) * 100)}%`,
-                    backgroundColor: player.colorHex,
-                  }}
-                />
-              </div>
+              <span className="text-[10px] font-medium text-[var(--muted)] whitespace-nowrap shrink-0">
+                空手
+              </span>
+            )}
+
+            {player.nearbyPickupLabel && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold whitespace-nowrap truncate">
+                可换：{player.nearbyPickupLabel}
+              </span>
             )}
           </div>
-
-          <span className="text-[10px] font-mono-num font-semibold text-[var(--muted)] whitespace-nowrap shrink-0">
-            {player.ammo}/{player.maxAmmo}
-          </span>
-
-          {player.statusItems.length > 0 && (
+        ) : (
+          <div
+            className={`flex items-center gap-2 min-w-0 ${
+              isRight ? 'flex-row-reverse' : 'flex-row'
+            }`}
+          >
             <div
-              className={`flex items-center gap-1 min-w-0 overflow-hidden ${
+              className={`flex items-center gap-0.5 shrink-0 ${
                 isRight ? 'flex-row-reverse' : 'flex-row'
               }`}
             >
-              {player.statusItems.map((item) => {
-                const accent =
-                  ITEM_ACCENT_COLORS[(item.iconKey as ItemKind) ?? 'shield'] ??
-                  ITEM_ACCENT_COLORS.shield;
-                return (
+              {showPips ? (
+                Array.from({ length: player.maxAmmo }).map((_, idx) => {
+                  const filled = idx < player.ammo;
+                  const isReloadingPip = idx === player.ammo && player.reloadProgress > 0;
+                  return (
+                    <div
+                      key={idx}
+                      className="relative w-2.5 h-1.5 rounded-[2px] bg-[var(--surface-secondary)] overflow-hidden border border-[var(--border)]"
+                    >
+                      {filled && (
+                        <div
+                          className="absolute inset-0"
+                          style={{ backgroundColor: player.colorHex }}
+                        />
+                      )}
+                      {isReloadingPip && (
+                        <div
+                          className="absolute inset-y-0 left-0 opacity-60"
+                          style={{
+                            width: `${Math.round(player.reloadProgress * 100)}%`,
+                            backgroundColor: player.colorHex,
+                          }}
+                        />
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="w-24 h-1.5 rounded-full bg-[var(--surface-secondary)] overflow-hidden border border-[var(--border)]">
                   <div
-                    key={item.id}
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap shrink-0 leading-none"
+                    className="h-full"
                     style={{
-                      backgroundColor: accent.bg,
-                      borderColor: accent.border,
-                      color: accent.fg,
+                      width: `${Math.round((player.ammo / Math.max(1, player.maxAmmo)) * 100)}%`,
+                      backgroundColor: player.colorHex,
                     }}
-                  >
-                    {item.iconKey && (
-                      <TankItemIcon kind={item.iconKey} className="w-3 h-3 shrink-0" />
-                    )}
-                    <span>{item.label}</span>
-                    <span className="font-mono-num">{item.valueText}</span>
-                  </div>
-                );
-              })}
+                  />
+                </div>
+              )}
             </div>
-          )}
-        </div>
+
+            <span className="text-[10px] font-mono-num font-semibold text-[var(--muted)] whitespace-nowrap shrink-0">
+              {player.ammo}/{player.maxAmmo}
+            </span>
+
+            {player.statusItems.length > 0 && (
+              <div
+                className={`flex items-center gap-1 min-w-0 overflow-hidden ${
+                  isRight ? 'flex-row-reverse' : 'flex-row'
+                }`}
+              >
+                {player.statusItems.map((item) => {
+                  const accent =
+                    ITEM_ACCENT_COLORS[(item.iconKey as ItemKind) ?? 'shield'] ??
+                    ITEM_ACCENT_COLORS.shield;
+                  return (
+                    <div
+                      key={item.id}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap shrink-0 leading-none"
+                      style={{
+                        backgroundColor: accent.bg,
+                        borderColor: accent.border,
+                        color: accent.fg,
+                      }}
+                    >
+                      {item.iconKey && (
+                        <TankItemIcon kind={item.iconKey} className="w-3 h-3 shrink-0" />
+                      )}
+                      <span>{item.label}</span>
+                      <span className="font-mono-num">{item.valueText}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
