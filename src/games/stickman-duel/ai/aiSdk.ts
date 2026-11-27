@@ -309,7 +309,8 @@ export function buildStickmanPromptMarkdown(
   const rulesBlock = options.includeCurrentRules
     ? `
 ## 当前对局数值
-- 最大生命：\`${rules.maxHp} HP\`，拳击 \`${rules.punchDamage}\`，踢腿 \`${rules.kickDamage}\`（强击飞）
+- 最大生命：\`${rules.maxHp} HP\`，受伤无敌保护 \`${rules.hurtInvulnSeconds}s\`（期间免疫伤害与击退），拳击 \`${rules.punchDamage}\`，踢腿 \`${rules.kickDamage}\`（强击飞）
+- 道具刷新：${rules.dropSpawnMode === 'center' ? '固定中间点位上方短距掉落' : '全场随机落点上方短距掉落'}
 - 长剑：耐久 \`${rules.swordDurability}\` 点（命中扣 1 点），单斩 \`${rules.swordDamage}\`
 - 手枪：\`${rules.pistolAmmo}\` 发直线，单发 \`${rules.pistolDamage}\`，弹速 \`${rules.pistolSpeed} px/s\`
 - 火箭筒：\`${rules.rocketAmmo}\` 发受重力抛射，中心伤害 \`${rules.rocketDamage}\`，爆炸半径 \`${rules.rocketBlastRadius}px\`（可炸毁砖块与短平台）

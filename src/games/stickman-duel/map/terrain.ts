@@ -1,5 +1,6 @@
 import { DeterministicRng } from '../../tank-battle/map/rng';
 import type {
+  StickmanDropSpawnMode,
   StickmanMapTemplate,
   StickmanTerrain,
   TerrainTileKind,
@@ -154,7 +155,7 @@ export function buildStickmanTerrain(
   // 根据种子做对称小幅随机掩体装饰（保持公平同时每局都有新鲜变化）
   const decorCount = 2 + Math.floor(rng.next() * 2);
   for (let i = 0; i < decorCount; i += 1) {
-    const col = 2 + Math.floor(rng.next() * 12);
+    const col = 5 + Math.floor(rng.next() * 9);
     // 找到该列自下而上的第一个可堆叠空位
     for (let r = rows - 2; r >= 11; r -= 1) {
       if (getTile(terrain, col, r) === 'empty' && getTile(terrain, col, r + 1) !== 'empty') {
@@ -167,9 +168,41 @@ export function buildStickmanTerrain(
     }
   }
 
-  // 为 2~8 位火柴人计算安全落脚出生点（确保头顶至少 2 格净空）
+  // 四角统一铺设对称短平台并预留 2 格头顶净空（左上、右上、左下、右下出生台）
+  ensureCornerSpawnPlatforms(terrain);
+
+  // 为 2~8 位火柴人计算安全落脚出生点（优先使用四个角落的短平台）
   terrain.spawnPoints = computeSafeSpawnPoints(terrain, Math.max(2, playerCount));
   return terrain;
+}
+
+/** 四个角落短平台坐标定义（每角 3 格宽单向短平台，上方清出 2 格空间确保开局稳稳站立） */
+export const CORNER_PLATFORM_SPECS: ReadonlyArray<{
+  id: 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';
+  startCol: number;
+  width: number;
+  row: number;
+  spawnCol: number;
+}> = [
+  { id: 'top_left', startCol: 1, width: 3, row: 6, spawnCol: 2 },
+  { id: 'top_right', startCol: STICKMAN_GRID_COLS - 4, width: 3, row: 6, spawnCol: STICKMAN_GRID_COLS - 3 },
+  { id: 'bottom_left', startCol: 1, width: 3, row: 12, spawnCol: 2 },
+  { id: 'bottom_right', startCol: STICKMAN_GRID_COLS - 4, width: 3, row: 12, spawnCol: STICKMAN_GRID_COLS - 3 },
+];
+
+function ensureCornerSpawnPlatforms(terrain: StickmanTerrain): void {
+  for (const spec of CORNER_PLATFORM_SPECS) {
+    // 清理短平台上方 2 行净空，防止砖块或上层平台卡住出生角色
+    fillRect(terrain, spec.startCol, spec.row - 2, spec.width, 2, 'empty');
+    // 铺设短平台（保留单向穿透与火箭可破坏属性）
+    fillRect(terrain, spec.startCol, spec.row, spec.width, 1, 'platform');
+    // 若平台正下方紧贴实心砖块则清空 1 格，避免下穿卡进砖内
+    for (let c = spec.startCol; c < spec.startCol + spec.width; c += 1) {
+      if (getTile(terrain, c, spec.row + 1) === 'brick') {
+        setTile(terrain, c, spec.row + 1, 'empty');
+      }
+    }
+  }
 }
 
 function findLandingYForColumn(terrain: StickmanTerrain, col: number, preferHigh: boolean): number {
@@ -195,20 +228,107 @@ function computeSafeSpawnPoints(
   count: number
 ): Array<{ x: number; y: number }> {
   const ts = terrain.tileSize;
-  const preferredCols2P = [5, terrain.cols - 6];
-  const preferredColsMulti = [3, terrain.cols - 4, 9, terrain.cols - 10, 14, terrain.cols - 15, 6, terrain.cols - 7];
-  const colsList = count <= 2 ? preferredCols2P : preferredColsMulti;
+  // 1~4 号出生点直接落在四个角落短平台中心：
+  // 2 人优先上左 & 上右（回合轮换可扩展到下左 & 下右），3~4 人自动占满四个角落短平台
+  const cornerSpawns = CORNER_PLATFORM_SPECS.map((spec) => ({
+    x: (spec.spawnCol + 0.5) * ts,
+    y: spec.row * ts,
+  }));
 
+  const fallbackCols = [9, terrain.cols - 10, 14, terrain.cols - 15];
+  const fallbackSpawns = fallbackCols.map((col, idx) => ({
+    x: (col + 0.5) * ts,
+    y: findLandingYForColumn(terrain, col, idx < 2),
+  }));
+
+  const pool = [...cornerSpawns, ...fallbackSpawns];
   const out: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i < count; i += 1) {
-    const col = colsList[i % colsList.length];
-    const y = findLandingYForColumn(terrain, col, i >= 2);
-    out.push({
-      x: (col + 0.5) * ts,
-      y,
-    });
+  for (let i = 0; i < Math.max(4, count); i += 1) {
+    out.push(pool[i % pool.length]);
   }
   return out;
+}
+
+export interface DropSurfaceCandidate {
+  col: number;
+  row: number;
+  x: number;
+  surfaceY: number;
+  tileKind: Exclude<TerrainTileKind, 'empty'>;
+}
+
+/**
+ * 扫描当前动态地形中所有可供道具安全落地的承重平面（短平台、未破坏砖块或底层基岩）：
+ * - 要求格子正上方至少有 2 格净空，确保道具在落点上方约 46px 出现后能稳稳落到该表面而绝不卡砖
+ * - mode === 'center' 仅优先地图中轴区域；mode === 'random' 在全图有效落点中均衡随机采样
+ */
+export function findValidDropSurface(
+  terrain: StickmanTerrain,
+  mode: StickmanDropSpawnMode,
+  rng: DeterministicRng,
+  avoidPoints: Array<{ x: number; y: number }> = []
+): DropSurfaceCandidate {
+  const ts = terrain.tileSize;
+  const allCandidates: DropSurfaceCandidate[] = [];
+
+  for (let c = 1; c < terrain.cols - 1; c += 1) {
+    for (let r = 3; r < terrain.rows; r += 1) {
+      const tile = getTile(terrain, c, r);
+      if (tile === 'empty') continue;
+      if (getTile(terrain, c, r - 1) !== 'empty' || getTile(terrain, c, r - 2) !== 'empty') {
+        continue;
+      }
+      allCandidates.push({
+        col: c,
+        row: r,
+        x: (c + 0.5) * ts,
+        surfaceY: r * ts,
+        tileKind: tile,
+      });
+    }
+  }
+
+  if (allCandidates.length === 0) {
+    const midCol = Math.floor(terrain.cols * 0.5);
+    return {
+      col: midCol,
+      row: terrain.rows - 1,
+      x: (midCol + 0.5) * ts,
+      surfaceY: (terrain.rows - 1) * ts,
+      tileKind: 'bedrock',
+    };
+  }
+
+  const midX = terrain.width * 0.5;
+  let pool = allCandidates;
+  if (mode === 'center') {
+    // 中间模式：优先地图中线左右 3.5 格范围内的落点（若有多个层高则从中随机挑一层，优先较高/显眼台面）
+    const centerCandidates = allCandidates.filter((cand) => Math.abs(cand.x - midX) <= ts * 3.5);
+    if (centerCandidates.length > 0) {
+      pool = centerCandidates;
+    }
+  }
+
+  // 尽量避开距离已有道具或角色过近的点位，提升落点分散度
+  if (avoidPoints.length > 0) {
+    const spaced = pool.filter((cand) =>
+      avoidPoints.every((pt) => Math.hypot(cand.x - pt.x, cand.surfaceY - pt.y) >= ts * 2.2)
+    );
+    if (spaced.length > 0) {
+      pool = spaced;
+    }
+  }
+
+  if (mode === 'center') {
+    // 中间模式下偏向最贴近中线的落点（从最靠近中线的前 4 个候选中抽选，避免永远完全叠死在同一点）
+    const sorted = [...pool].sort(
+      (a, b) => Math.abs(a.x - midX) - Math.abs(b.x - midX) || a.row - b.row
+    );
+    const topK = sorted.slice(0, Math.min(4, sorted.length));
+    return topK[Math.floor(rng.next() * topK.length)];
+  }
+
+  return pool[Math.floor(rng.next() * pool.length)];
 }
 
 export interface DestroyedTileInfo {

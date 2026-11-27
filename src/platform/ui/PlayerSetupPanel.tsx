@@ -391,7 +391,11 @@ export function PlayerSetupPanel({
                     }}
                     aria-hidden="true"
                   >
-                    <MiniTankPreview colorHex={profile.colorHex} />
+                    {actions.some((a) => a.id === 'kick' || a.id === 'jump') ? (
+                      <MiniStickmanPreview colorHex={profile.colorHex} />
+                    ) : (
+                      <MiniTankPreview colorHex={profile.colorHex} />
+                    )}
                   </div>
 
                   <div className="flex-1 min-w-0 space-y-2">
@@ -835,6 +839,60 @@ function MiniTankPreview({ colorHex }: { colorHex: string }) {
       />
       <circle cx="22" cy="24" r="7.5" fill={colorHex} stroke="#1C2127" strokeWidth="2" />
       <circle cx="20.5" cy="22.5" r="2.6" fill="rgba(255,255,255,0.35)" />
+    </svg>
+  );
+}
+
+function MiniStickmanPreview({ colorHex }: { colorHex: string }) {
+  return (
+    <svg viewBox="0 0 48 48" className="w-10 h-10" aria-hidden="true">
+      {/* 飘动头巾 */}
+      <path
+        d="M21 13 C15 12 11 14 7 12"
+        fill="none"
+        stroke={colorHex}
+        strokeWidth="3.5"
+        strokeLinecap="round"
+      />
+      {/* 主题色外轮廓骨架 */}
+      <g
+        fill="none"
+        stroke={colorHex}
+        strokeWidth="5.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M24 19 L23 30" />
+        <path d="M23 30 L16 37 L13 43" />
+        <path d="M23 30 L31 35 L35 42" />
+        <path d="M24 21 L16 26 L13 24" />
+        <path d="M24 21 L33 23 L38 19" />
+      </g>
+      {/* 主骨架 */}
+      <g
+        fill="none"
+        stroke="currentColor"
+        className="text-[#181E26] dark:text-[#F8FAFC]"
+        strokeWidth="2.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M24 19 L23 30" />
+        <path d="M23 30 L16 37 L13 43" />
+        <path d="M23 30 L31 35 L35 42" />
+        <path d="M24 21 L16 26 L13 24" />
+        <path d="M24 21 L33 23 L38 19" />
+      </g>
+      {/* 头部与护目镜亮条 */}
+      <circle
+        cx="25"
+        cy="12.5"
+        r="5.6"
+        className="fill-[#181E26] dark:fill-[#F8FAFC]"
+        stroke={colorHex}
+        strokeWidth="2.2"
+      />
+      <rect x="25.5" y="10.8" width="4.8" height="2.2" rx="1" fill={colorHex} />
     </svg>
   );
 }

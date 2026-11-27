@@ -17,10 +17,11 @@ export type StickmanMapTemplate =
 
 export type StickWeaponKind = 'sword' | 'pistol' | 'rocket';
 export type StickPickupKind = StickWeaponKind | 'medkit';
+export type StickmanDropSpawnMode = 'random' | 'center';
 
 export interface HeldWeaponState {
   kind: StickWeaponKind;
-  /** 剑=剩余耐久(初始8，命中敌人-1)；枪=剩余子弹(初始3)；火箭筒=剩余火箭(初始1) */
+  /** 剑=剩余耐久(默认5，命中敌人-1)；枪=剩余子弹(初始3)；火箭筒=剩余火箭(初始1) */
   remaining: number;
   max: number;
 }
@@ -210,6 +211,7 @@ export interface StickmanDuelRules extends Record<string, unknown> {
 
   // 角色与血量手感（combat / advanced）
   maxHp: number;
+  hurtInvulnSeconds: number;
   moveSpeed: number;
   jumpVelocity: number;
   gravity: number;
@@ -218,6 +220,7 @@ export interface StickmanDuelRules extends Record<string, unknown> {
   kickKnockback: number;
 
   // 武器与道具（drops / items）
+  dropSpawnMode: StickmanDropSpawnMode;
   firstDropDelaySeconds: number;
   dropIntervalMinSeconds: number;
   dropIntervalMaxSeconds: number;

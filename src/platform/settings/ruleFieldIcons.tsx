@@ -23,6 +23,7 @@ import {
   Repeat,
   Rocket,
   RotateCw,
+  Shield,
   SlidersHorizontal,
   Sword,
   Timer,
@@ -172,6 +173,8 @@ function resolveFieldIconSpec(fieldKey: string): FieldIconSpec {
       return { icon: <Layers className="w-3.5 h-3.5" aria-hidden="true" />, color: '#0284C7' };
     case 'maxHp':
       return { icon: <Heart className="w-3.5 h-3.5" aria-hidden="true" />, color: '#E11D48' };
+    case 'hurtInvulnSeconds':
+      return { icon: <Shield className="w-3.5 h-3.5" aria-hidden="true" />, color: '#0284C7' };
     case 'punchDamage':
       return { icon: <Hand className="w-3.5 h-3.5" aria-hidden="true" />, color: '#EA580C' };
     case 'kickDamage':
@@ -184,6 +187,8 @@ function resolveFieldIconSpec(fieldKey: string): FieldIconSpec {
       return { icon: <ArrowUp className="w-3.5 h-3.5" aria-hidden="true" />, color: '#0284C7' };
     case 'gravity':
       return { icon: <ArrowDown className="w-3.5 h-3.5" aria-hidden="true" />, color: '#6366F1' };
+    case 'dropSpawnMode':
+      return { icon: <MapPin className="w-3.5 h-3.5" aria-hidden="true" />, color: '#7C3AED' };
     case 'firstDropDelaySeconds':
     case 'dropIntervalMinSeconds':
     case 'dropIntervalMaxSeconds':

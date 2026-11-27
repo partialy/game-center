@@ -51,6 +51,8 @@ import {
 } from '../theme/themeStore';
 import { TankItemsArmoryPanel } from '../../games/tank-battle/ui/TankItemsArmoryPanel';
 import type { TankBattleRules } from '../../games/tank-battle/types';
+import { StickmanItemsArmoryPanel } from '../../games/stickman-duel/ui/StickmanItemsArmoryPanel';
+import type { StickmanDuelRules } from '../../games/stickman-duel/types';
 import { ArenaRosterPanel } from './ArenaRosterPanel';
 import {
   PlayerSetupPanel,
@@ -1026,11 +1028,19 @@ export function SettingsView<TRules extends Record<string, unknown>>({
                   </div>
                 )}
 
-                {/* 5. 道具：游戏化军械库卡片网格（7大道具复用高清战场图标 + 点击弹窗调校） */}
+                {/* 5. 道具：游戏化军械库卡片网格（坦克大战 7 卡 / 火柴人决斗 4 卡，点击弹窗调校） */}
                 {activeCategory === 'items' &&
                   (selectedGame.id === 'tank-battle' ? (
                     <TankItemsArmoryPanel
                       rules={rules as unknown as TankBattleRules}
+                      issues={ruleIssues}
+                      onChangeRules={(next) =>
+                        onChangeRules(next as unknown as TRules)
+                      }
+                    />
+                  ) : selectedGame.id === 'stickman-duel' ? (
+                    <StickmanItemsArmoryPanel
+                      rules={rules as unknown as StickmanDuelRules}
                       issues={ruleIssues}
                       onChangeRules={(next) =>
                         onChangeRules(next as unknown as TRules)

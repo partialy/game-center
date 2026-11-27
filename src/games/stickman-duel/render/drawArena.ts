@@ -559,6 +559,13 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
   ): void {
     ctx.save();
 
+    const invulnAlpha =
+      f.alive && f.invulnTimer > 0
+        ? Math.floor(f.invulnTimer * 36) % 2 === 0
+          ? 0.34
+          : 0.82
+        : 1;
+
     // 脚底接触阴影（仅存活且贴近地面/空中柔和缩放）
     if (f.alive) {
       ctx.fillStyle = palette.dark ? 'rgba(0,0,0,0.42)' : 'rgba(28,33,39,0.18)';
@@ -570,7 +577,7 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     // 飘动头巾（世界坐标绘制，提供强烈动势与玩家颜色辨识）
     if (f.scarf.length >= 2) {
       ctx.save();
-      ctx.globalAlpha = f.alive ? 0.95 : Math.max(0.15, 1 - f.koTimer * 0.7);
+      ctx.globalAlpha = f.alive ? 0.95 * invulnAlpha : Math.max(0.15, 1 - f.koTimer * 0.7);
       ctx.strokeStyle = f.config.colorHex;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -597,11 +604,16 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.translate(0, -18);
       ctx.rotate(f.koSpin);
       ctx.translate(0, 18);
-    } else if (!f.onGround && f.jumpsUsed >= 2 && Math.abs(f.airSpinAngle) > 0.01) {
-      // 二段跳空中翻滚
-      ctx.translate(0, -24);
-      ctx.rotate(f.airSpinAngle);
-      ctx.translate(0, 24);
+    } else {
+      if (invulnAlpha < 1) {
+        ctx.globalAlpha = invulnAlpha;
+      }
+      if (!f.onGround && f.jumpsUsed >= 2 && Math.abs(f.airSpinAngle) > 0.01) {
+        // 二段跳空中翻滚
+        ctx.translate(0, -24);
+        ctx.rotate(f.airSpinAngle);
+        ctx.translate(0, 24);
+      }
     }
 
     const isFlash = f.hitFlashTimer > 0;
@@ -855,16 +867,17 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     ctx.rotate(angle);
 
     if (kind === 'sword') {
-      // 长剑：亮银青光刃 + 金色护手
+      // 长剑：亮银青光刃 + 金色护手（保留角色无敌闪烁时的透明度继承）
+      const baseAlpha = ctx.globalAlpha;
       ctx.strokeStyle = '#38BDF8';
       ctx.lineWidth = 5.5;
-      ctx.globalAlpha = 0.35;
+      ctx.globalAlpha = baseAlpha * 0.35;
       ctx.beginPath();
       ctx.moveTo(4, 0);
       ctx.lineTo(44, 0);
       ctx.stroke();
 
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = baseAlpha;
       ctx.strokeStyle = '#F8FAFC';
       ctx.lineWidth = 2.8;
       ctx.beginPath();

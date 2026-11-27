@@ -32,10 +32,10 @@ export const stickmanDuelGame: GameDefinition<StickmanDuelRules, StickmanWorld> 
     { id: 'moveRight', label: '右移 / 右瞄' },
     { id: 'aimUp', label: '向上瞄准' },
     { id: 'aimDown', label: '下瞄 / 穿台' },
-    { id: 'attack', label: '出拳 / 武器攻击（左键）' },
-    { id: 'kick', label: '飞踢击飞（上键）' },
-    { id: 'jump', label: '跳跃 / 二段跳（下键）' },
-    { id: 'swap', label: '拾取 / 换武器（右键）' },
+    { id: 'attack', label: '出拳 / 持武攻' },
+    { id: 'kick', label: '飞踢击飞' },
+    { id: 'jump', label: '跳跃 / 二段' },
+    { id: 'swap', label: '拾取 / 换武器' },
   ],
   defaultBindingsBySlot: {
     p1: {

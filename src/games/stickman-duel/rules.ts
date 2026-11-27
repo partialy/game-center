@@ -84,6 +84,7 @@ export function getDefaultStickmanRules(): StickmanDuelRules {
 
     // 战斗与血量（combat）
     maxHp: 100,
+    hurtInvulnSeconds: 0.1,
     punchDamage: 10,
     kickDamage: 14,
     kickKnockback: 490,
@@ -93,7 +94,8 @@ export function getDefaultStickmanRules(): StickmanDuelRules {
     jumpVelocity: 575,
     gravity: 1420,
 
-    // 掉落节奏（drops）
+    // 掉落节奏与刷新位置（drops）
+    dropSpawnMode: 'random',
     firstDropDelaySeconds: 2.5,
     dropIntervalMinSeconds: 5.5,
     dropIntervalMaxSeconds: 9,
@@ -104,7 +106,7 @@ export function getDefaultStickmanRules(): StickmanDuelRules {
     enableMedkit: true,
 
     // 武器与道具数值（items）
-    swordDurability: 8,
+    swordDurability: 5,
     swordDamage: 18,
     pistolAmmo: 3,
     pistolDamage: 22,
@@ -168,6 +170,16 @@ export const STICKMAN_RULE_FIELDS: RuleFieldSchema[] = [
 
   // 血条与拳脚（combat）
   { key: 'maxHp', group: 'combat', label: '最大生命值', type: 'integer', min: 50, max: 300, step: 10, unit: 'HP' },
+  {
+    key: 'hurtInvulnSeconds',
+    group: 'combat',
+    label: '受伤无敌时长',
+    type: 'number',
+    min: 0,
+    max: 0.8,
+    step: 0.05,
+    unit: '秒',
+  },
   { key: 'punchDamage', group: 'combat', label: '出拳伤害', type: 'integer', min: 4, max: 40, step: 1, unit: '伤' },
   { key: 'kickDamage', group: 'combat', label: '踢腿伤害', type: 'integer', min: 6, max: 50, step: 1, unit: '伤' },
   { key: 'kickKnockback', group: 'combat', label: '踢腿击飞力度', type: 'integer', min: 200, max: 850, step: 20, unit: '' },
@@ -177,8 +189,18 @@ export const STICKMAN_RULE_FIELDS: RuleFieldSchema[] = [
   { key: 'jumpVelocity', group: 'advanced', label: '跳跃起跳初速', type: 'integer', min: 380, max: 820, step: 15, unit: 'px/s' },
   { key: 'gravity', group: 'advanced', label: '重力加速度', type: 'integer', min: 800, max: 2200, step: 40, unit: '' },
 
-  // 空投节奏与开关（drops）
-  { key: 'firstDropDelaySeconds', group: 'drops', label: '首次空投时间', type: 'number', min: 0.5, max: 20, step: 0.5, unit: '秒' },
+  // 掉落位置与节奏（drops）
+  {
+    key: 'dropSpawnMode',
+    group: 'drops',
+    label: '道具刷新位置',
+    type: 'select',
+    options: [
+      { value: 'random', label: '随机位置' },
+      { value: 'center', label: '固定中间' },
+    ],
+  },
+  { key: 'firstDropDelaySeconds', group: 'drops', label: '首次刷新时间', type: 'number', min: 0.5, max: 20, step: 0.5, unit: '秒' },
   { key: 'dropIntervalMinSeconds', group: 'drops', label: '最小刷新间隔', type: 'number', min: 1.5, max: 30, step: 0.5, unit: '秒' },
   { key: 'dropIntervalMaxSeconds', group: 'drops', label: '最大刷新间隔', type: 'number', min: 2, max: 45, step: 0.5, unit: '秒' },
   { key: 'maxDropsOnField', group: 'drops', label: '同场掉落上限', type: 'integer', min: 1, max: 10, step: 1, unit: '个' },
@@ -217,6 +239,9 @@ export function migrateStickmanRules(raw: unknown): {
   const src = raw as Record<string, unknown>;
   const out: Record<string, unknown> = { ...defaults };
   let recovered = false;
+  let migrated = false;
+
+  const isLegacyBeforeArmory = !('dropSpawnMode' in src) && !('hurtInvulnSeconds' in src);
 
   for (const [key, defVal] of Object.entries(defaults)) {
     if (!(key in src)) continue;
@@ -242,9 +267,22 @@ export function migrateStickmanRules(raw: unknown): {
     }
   }
 
+  // 旧版本规则默认剑耐久为 8，迁移至新版默认值 5（保留用户自定义的其它耐久值）
+  if (isLegacyBeforeArmory) {
+    migrated = true;
+    if (out.swordDurability === 8) {
+      out.swordDurability = defaults.swordDurability;
+    }
+  }
+
+  if (out.dropSpawnMode !== 'random' && out.dropSpawnMode !== 'center') {
+    out.dropSpawnMode = defaults.dropSpawnMode;
+    recovered = true;
+  }
+
   return {
     rules: out as StickmanDuelRules,
-    migrated: false,
+    migrated,
     recoveredFromError: recovered,
   };
 }

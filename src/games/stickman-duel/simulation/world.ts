@@ -15,6 +15,7 @@ import { DeterministicRng } from '../../tank-battle/map/rng';
 import {
   buildStickmanTerrain,
   destroyTerrainInRadius,
+  findValidDropSurface,
   moveBodyWithTerrain,
   sampleProjectileTerrainHit,
 } from '../map/terrain';
@@ -36,7 +37,6 @@ import {
   PICKUP_LABELS,
   applyMedkitHeal,
   computeRocketSplash,
-  formatWeaponBadge,
   getWeaponMaxCharges,
   resolveEightWayAim,
   swapFighterWeapon,
@@ -48,6 +48,7 @@ const COYOTE_TIME_SECONDS = 0.085;
 const JUMP_BUFFER_SECONDS = 0.095;
 const DROP_THROUGH_SECONDS = 0.19;
 const PICKUP_INTERACT_RADIUS = 56;
+const PICKUP_DROP_OFFSET_Y = 46;
 const ROUND_OVER_BANNER_SECONDS = 2.1;
 
 function createEmptyStats(): PlayerMatchStats {
@@ -185,8 +186,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     };
 
     this.dropSpawnTimer = this.rules.firstDropDelaySeconds;
-    // 开局在高台或中场预先投放 1 件初始武器，让开局即可争夺武器
-    this.spawnInitialCenterWeapon();
+    // 开局按刷新位置策略（默认随机/可选中间）预先投放 1 件初始武器
+    this.spawnInitialWeapon();
   }
 
   private buildRoundTerrain(roundNumber: number) {
@@ -202,9 +203,17 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     roundNumber: number
   ): StickFighter[] {
     const players = this.snapshot.players;
-    const swapSides = players.length === 2 && roundNumber % 2 === 0;
+    const useLowerPair = players.length === 2 && roundNumber % 2 === 0;
     return players.map((config, idx) => {
-      const spIdx = swapSides ? (idx === 0 ? 1 : 0) : idx;
+      // 2 人模式：奇数回合上左/上右四角短平台，偶数回合下右/下左对角轮换；3~8 人依次占满四角再补中场
+      const spIdx =
+        players.length === 2
+          ? useLowerPair
+            ? idx === 0
+              ? 3
+              : 2
+            : idx
+          : idx;
       const sp = terrain.spawnPoints[spIdx % terrain.spawnPoints.length] ?? {
         x: terrain.width * (idx === 0 ? 0.2 : 0.8),
         y: terrain.height - terrain.tileSize,
@@ -214,27 +223,41 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     });
   }
 
-  private spawnInitialCenterWeapon(): void {
-    const enabled = this.getEnabledWeaponKinds();
-    if (enabled.length === 0) return;
-    const kind = enabled[Math.floor(this.rng.next() * enabled.length)];
-    const max = getWeaponMaxCharges(kind, this.rules);
+  private spawnPickupByMode(kind: StickPickupKind, lifetime: number): void {
+    const mode = this.rules.dropSpawnMode === 'center' ? 'center' : 'random';
+    const avoidPoints: Array<{ x: number; y: number }> = [
+      ...this.world.pickups.map((p) => ({ x: p.x, y: p.y })),
+      ...this.world.fighters.filter((f) => f.alive).map((f) => ({ x: f.x, y: f.y })),
+    ];
+    const spot = findValidDropSurface(this.world.terrain, mode, this.rng, avoidPoints);
+    const max = kind === 'medkit' ? 1 : getWeaponMaxCharges(kind, this.rules);
+    const spawnY = Math.max(24, spot.surfaceY - PICKUP_DROP_OFFSET_Y);
+
     this.world.pickups.push({
       id: this.nextEntityId++,
       kind,
       remaining: max,
       max,
-      x: this.world.terrain.width * 0.5,
-      y: 72,
+      x: spot.x,
+      y: spawnY,
       vx: 0,
       vy: 0,
       radius: 15,
       onGround: false,
       age: 0,
-      lifetime: 32,
+      lifetime,
       pickupLockTimer: 0,
       droppedBySlotId: null,
     });
+
+    this.spawnSparkBurst(spot.x, spawnY, 0, -1, 6, PICKUP_ACCENTS[kind]);
+  }
+
+  private spawnInitialWeapon(): void {
+    const enabled = this.getEnabledWeaponKinds();
+    if (enabled.length === 0) return;
+    const kind = enabled[Math.floor(this.rng.next() * enabled.length)];
+    this.spawnPickupByMode(kind, 32);
   }
 
   private getEnabledWeaponKinds(): Array<'sword' | 'pistol' | 'rocket'> {
@@ -288,7 +311,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         hp: Math.max(0, Math.ceil(f.hp)),
         maxHp: f.maxHp,
         weaponKind: f.weapon?.kind ?? null,
-        weaponLabel: formatWeaponBadge(f.weapon),
+        weaponLabel: f.weapon ? PICKUP_LABELS[f.weapon.kind] : undefined,
         weaponCount: f.weapon?.remaining ?? 0,
         weaponMaxCount: f.weapon?.max ?? 0,
         nearbyPickupLabel: f.nearbyDropLabel,
@@ -428,25 +451,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
 
     if (this.world.pickups.length < this.rules.maxDropsOnField) {
       const kind = pool[Math.floor(this.rng.next() * pool.length)];
-      const margin = this.world.terrain.tileSize * 2.5;
-      const x = margin + this.rng.next() * (this.world.terrain.width - margin * 2);
-      const max = kind === 'medkit' ? 1 : getWeaponMaxCharges(kind, this.rules);
-      this.world.pickups.push({
-        id: this.nextEntityId++,
-        kind,
-        remaining: max,
-        max,
-        x,
-        y: 36,
-        vx: (this.rng.next() - 0.5) * 40,
-        vy: 0,
-        radius: 15,
-        onGround: false,
-        age: 0,
-        lifetime: 30,
-        pickupLockTimer: 0,
-        droppedBySlotId: null,
-      });
+      this.spawnPickupByMode(kind, 30);
     }
 
     const minI = this.rules.dropIntervalMinSeconds;
@@ -941,7 +946,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       }
     }
 
-    // 长剑耐久制：击中对手一次扣 1 点（挥空不掉），共 8 点，归零碎裂
+    // 长剑耐久制：击中对手一次扣 1 点（挥空不掉），默认 5 点，归零碎裂
     if (kind === 'sword' && attacker.weapon && attacker.weapon.kind === 'sword') {
       attacker.weapon.remaining -= 1;
       if (attacker.weapon.remaining <= 0) {
@@ -980,8 +985,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     hitstopSeconds: number,
     shakePower: number,
     sounds: SoundEventKind[]
-  ): void {
-    if (!target.alive) return;
+  ): boolean {
+    if (!target.alive || target.invulnTimer > 0) return false;
     target.hp = Math.max(0, target.hp - damage);
     target.vx = kbX;
     target.vy = kbY;
@@ -989,6 +994,10 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     target.onPlatform = false;
     target.hitStunTimer = Math.max(target.hitStunTimer, stunSeconds);
     target.hitFlashTimer = 0.12;
+    const invulnDuration = Math.max(0, this.rules.hurtInvulnSeconds ?? 0.1);
+    if (invulnDuration > 0) {
+      target.invulnTimer = Math.max(target.invulnTimer, invulnDuration);
+    }
     target.attack = null;
 
     if (attackerSlotId !== target.slotId) {
@@ -1027,6 +1036,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     if (target.hp <= 0) {
       this.eliminateFighter(target, attackerSlotId, sounds);
     }
+    return true;
   }
 
   private eliminateFighter(
@@ -1141,9 +1151,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
           break;
         }
 
-        // 2. 命中角色检测
+        // 2. 命中角色检测（无敌保护期间免疫子弹命中与击退）
         for (const f of this.world.fighters) {
-          if (!f.alive) continue;
+          if (!f.alive || f.invulnTimer > 0) continue;
           if (f.slotId === proj.ownerSlotId && proj.age < 0.14) continue;
           const withinX = Math.abs(proj.x - f.x) <= f.halfWidth + proj.radius;
           const withinY = proj.y >= f.y - f.height - proj.radius && proj.y <= f.y + proj.radius;
@@ -1161,9 +1171,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
           this.detonateRocket(proj.x, proj.y, proj.ownerSlotId, proj.blastRadius, proj.damage, sounds);
         } else if (hitFighter) {
           const dirLen = Math.hypot(proj.vx, proj.vy) || 1;
-          const ownerStats = this.world.stats[proj.ownerSlotId];
-          if (ownerStats) ownerStats.hitsLanded += 1;
-          this.dealDamage(
+          const landed = this.dealDamage(
             proj.ownerSlotId,
             hitFighter,
             proj.damage,
@@ -1174,6 +1182,10 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
             5.8,
             sounds
           );
+          if (landed) {
+            const ownerStats = this.world.stats[proj.ownerSlotId];
+            if (ownerStats) ownerStats.hitsLanded += 1;
+          }
         } else if (impacted) {
           this.spawnSparkBurst(proj.x, proj.y, -Math.sign(proj.vx || 1), -0.4, 7, '#FDE047');
           sounds.push('bounce');
@@ -1232,10 +1244,10 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       }
     }
 
-    // 3. 大范围溅射伤害与强力放射击飞
+    // 3. 大范围溅射伤害与强力放射击飞（受伤无敌期间同样完全免疫伤害与击退）
     let hitAnyone = false;
     for (const f of this.world.fighters) {
-      if (!f.alive) continue;
+      if (!f.alive || f.invulnTimer > 0) continue;
       const fx = f.x;
       const fy = f.y - f.height * 0.5;
       const dx = fx - cx;
@@ -1249,10 +1261,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       const kbX = (dx / len) * kbSpeed;
       const kbY = Math.min(-260, (dy / len) * kbSpeed - 220);
 
-      if (f.slotId !== ownerSlotId) {
-        hitAnyone = true;
-      }
-      this.dealDamage(
+      const landed = this.dealDamage(
         ownerSlotId,
         f,
         splash.damage,
@@ -1263,6 +1272,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         13.5,
         sounds
       );
+      if (landed && f.slotId !== ownerSlotId) {
+        hitAnyone = true;
+      }
     }
 
     if (hitAnyone) {
@@ -1686,7 +1698,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     this.world.countdownSeconds = this.rules.countdownSeconds;
     this.world.phase = this.rules.countdownSeconds > 0 ? 'countdown' : 'playing';
     this.dropSpawnTimer = this.rules.firstDropDelaySeconds;
-    this.spawnInitialCenterWeapon();
+    this.spawnInitialWeapon();
   }
 
   private buildMatchResult(winnerSlotIds: PlayerSlotId[]): MatchResultEvent {
