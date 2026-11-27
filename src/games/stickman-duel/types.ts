@@ -88,6 +88,12 @@ export interface StickFighter {
   hitStunTimer: number;
   hitFlashTimer: number;
   invulnTimer: number;
+  /** 人物级局部受击/后坐力抖动与挤压形变状态（替代频繁全屏晃动） */
+  impactShakeTimer: number;
+  impactShakeMax: number;
+  impactShakeIntensity: number;
+  impactDirX: number;
+  impactDirY: number;
   /** 同一次散弹齐射 ID（允许同一发猎枪的 3 枚小弹同时命中，不与受伤无敌期冲突） */
   lastHitVolleyId: number | null;
   /** 后坐力短时滑移缓冲（防止地面高摩擦瞬间吞掉猎枪后退位移） */
@@ -200,6 +206,20 @@ export interface ExplosionEffect {
   color: string;
 }
 
+/** 局部打击波：驱动命中点附近砖块/平台/地面的局部微震与冲击波纹，避免整屏高频晃动 */
+export interface LocalImpactWave {
+  x: number;
+  y: number;
+  dirX: number;
+  dirY: number;
+  radius: number;
+  strength: number;
+  color: string;
+  age: number;
+  maxAge: number;
+  kind: 'hit' | 'parry' | 'muzzle' | 'blast';
+}
+
 export interface FloatingCombatText {
   x: number;
   y: number;
@@ -281,6 +301,53 @@ export interface StickmanDuelRules extends Record<string, unknown> {
   enableMedkit: boolean;
 }
 
+export type StickmanTrainingDrill = 'free' | 'headshot' | 'parry' | 'combo';
+export type TrainingDummyMotion = 'stand' | 'strafe' | 'jump';
+export type TrainingParryAmmo = 'pistol' | 'shotgun' | 'grenade' | 'mixed';
+export type TrainingParryCadence = 'slow' | 'normal' | 'fast';
+export type TrainingDispenseMode = 'equip' | 'drop';
+export type TrainingParryShotKind = 'pistol' | 'shotgun' | 'grenade' | 'rocket';
+
+export interface StickmanTrainingStats {
+  comboHits: number;
+  comboDamage: number;
+  bestComboHits: number;
+  bestComboDamage: number;
+  comboResetTimer: number;
+  totalHits: number;
+  headshots: number;
+  bodyHits: number;
+  legHits: number;
+  headshotStreak: number;
+  bestHeadshotStreak: number;
+  parries: number;
+  parryStreak: number;
+  bestParryStreak: number;
+  playerHitsTaken: number;
+}
+
+export interface StickmanTrainingState {
+  enabled: true;
+  drill: StickmanTrainingDrill;
+  dummyMotion: TrainingDummyMotion;
+  infiniteWeapon: boolean;
+  showHitZones: boolean;
+  zeroHurtInvuln: boolean;
+  parryAmmo: TrainingParryAmmo;
+  parryCadence: TrainingParryCadence;
+  parryFireTimer: number;
+  parryTelegraphTimer: number;
+  parryNextKind: TrainingParryShotKind;
+  parryShotIndex: number;
+  dummyIdleHealTimer: number;
+  dummyJumpCooldown: number;
+  dummyHomeX: number;
+  dummyHomeY: number;
+  stats: StickmanTrainingStats;
+  /** 每次统计或配置变更递增，驱动轻量 HUD 刷新 */
+  revision: number;
+}
+
 export interface StickmanWorld {
   phase: SessionPhase;
   roundNumber: number;
@@ -298,15 +365,18 @@ export interface StickmanWorld {
   particles: CombatParticle[];
   slashes: SlashEffect[];
   explosions: ExplosionEffect[];
+  impactWaves: LocalImpactWave[];
   floatingTexts: FloatingCombatText[];
   scores: Record<PlayerSlotId, number>;
   stats: Record<PlayerSlotId, PlayerMatchStats>;
   drawRounds: number;
   roundBanner: RoundBannerInfo | null;
-  /** 打击感：顿帧与方向性震屏 */
+  /** 打击感：顿帧与克制的重击/爆炸微幅震屏 */
   hitstopTimer: number;
   shakeIntensity: number;
   shakeDirX: number;
   shakeDirY: number;
   rules: StickmanDuelRules;
+  /** 专项练习关卡运行时状态（正式对战时为 null） */
+  training: StickmanTrainingState | null;
 }

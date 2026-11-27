@@ -176,6 +176,56 @@ export function buildStickmanTerrain(
   return terrain;
 }
 
+/**
+ * 专项练习关卡道场地形：
+ * - Row 17：平整无障碍基岩地面，便于练习平地瞄准、斩弹与连招追击
+ * - 三座高低错落的单向短平台：左中、正中高台、右中，用于高低差爆头、穿台和空连
+ * - 右侧边缘 2×3 可破坏砖墙：供碎片手雷（单格爆破）与火箭筒（范围拆墙）演练，支持一键重置修复
+ */
+export function buildStickmanTrainingTerrain(seed = 202607): StickmanTerrain {
+  const rng = new DeterministicRng(seed);
+  const cols = STICKMAN_GRID_COLS;
+  const rows = STICKMAN_GRID_ROWS;
+  const tiles: TerrainTileKind[] = new Array(cols * rows).fill('empty');
+  const variants = new Uint8Array(cols * rows);
+  for (let i = 0; i < variants.length; i += 1) {
+    variants[i] = Math.floor(rng.next() * 256);
+  }
+
+  const terrain: StickmanTerrain = {
+    cols,
+    rows,
+    tileSize: STICKMAN_TILE_SIZE,
+    width: cols * STICKMAN_TILE_SIZE,
+    height: rows * STICKMAN_TILE_SIZE,
+    template: 'sky_platforms',
+    tiles,
+    variants,
+    spawnPoints: [],
+  };
+
+  for (let c = 0; c < cols; c += 1) {
+    terrain.tiles[tileIndex(cols, c, rows - 1)] = 'bedrock';
+  }
+
+  // 三座对称悬空短平台（留足净空不遮挡中心视线与水平弹道）
+  fillRect(terrain, 5, 13, 4, 1, 'platform');
+  fillRect(terrain, 14, 10, 4, 1, 'platform');
+  fillRect(terrain, 22, 13, 4, 1, 'platform');
+
+  // 右侧可破坏砖墙练习靶区（2 列 × 3 行）
+  fillRect(terrain, 28, 14, 2, 3, 'brick');
+
+  const ts = STICKMAN_TILE_SIZE;
+  const floorY = (rows - 1) * ts;
+  terrain.spawnPoints = [
+    { x: 8.5 * ts, y: floorY },
+    { x: 21.5 * ts, y: floorY },
+  ];
+
+  return terrain;
+}
+
 /** 四个角落短平台坐标定义（每角 3 格宽单向短平台，上方清出 2 格空间确保开局稳稳站立） */
 export const CORNER_PLATFORM_SPECS: ReadonlyArray<{
   id: 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right';

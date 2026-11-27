@@ -40,6 +40,9 @@ import { VirtualGamepadAbxy } from './VirtualGamepadAbxy';
 import { AppSlider } from './heroUiHelpers';
 import { ITEM_ACCENT_COLORS, TankItemIcon } from '../../games/tank-battle/ui/itemIcons';
 import type { ItemKind } from '../../games/tank-battle/types';
+import type { StickmanDuelSession } from '../../games/stickman-duel/simulation/world';
+import type { StickmanTrainingState } from '../../games/stickman-duel/types';
+import { StickmanTrainingConsole } from '../../games/stickman-duel/ui/StickmanTrainingConsole';
 
 interface GameViewportProps<TRules = Record<string, unknown>, TWorld = unknown> {
   game: GameDefinition<TRules, TWorld>;
@@ -101,6 +104,7 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
   onToggleDebugModeRef.current = onToggleDebugMode;
 
   const [hud, setHud] = useState<HudState | null>(null);
+  const [trainingState, setTrainingState] = useState<StickmanTrainingState | null>(null);
   const [botStatuses, setBotStatuses] = useState<Record<PlayerSlotId, BotRuntimeStatus>>({});
   const [paused, setPaused] = useState(false);
   const [pauseReason, setPauseReason] = useState<string>('user');
@@ -120,7 +124,13 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
     setBotStatuses({});
 
     const host = new SessionHost(game, snapshot, canvas, {
-      onHudUpdate: (nextHud) => setHud(nextHud),
+      onHudUpdate: (nextHud) => {
+        setHud(nextHud);
+        if (snapshot.trainingMode && game.id === 'stickman-duel') {
+          const stickSession = host.getSession() as unknown as StickmanDuelSession;
+          setTrainingState(stickSession.getTrainingState());
+        }
+      },
       onBotStatusUpdate: (statuses) => setBotStatuses(statuses),
       onPausedChange: (isPaused, reason) => {
         setPaused(isPaused);
@@ -145,6 +155,12 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
     hostRef.current = host;
     host.setDebugMode(debugModeRef.current);
     setPaused(false);
+    if (snapshot.trainingMode && game.id === 'stickman-duel') {
+      const stickSession = host.getSession() as unknown as StickmanDuelSession;
+      setTrainingState(stickSession.getTrainingState());
+    } else {
+      setTrainingState(null);
+    }
     if (debugModeRef.current) {
       setPerfSnapshot(collector.getSnapshot(false));
     }
@@ -288,12 +304,39 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
       ? formatClock(hud.roundTimeRemainingSeconds)
       : formatClock(hud?.battleElapsedSeconds ?? 0);
 
+  const isTrainingMode = Boolean(snapshot.trainingMode && game.id === 'stickman-duel');
+  const runTrainingAction = (action: (session: StickmanDuelSession) => void) => {
+    const host = hostRef.current;
+    if (!host || !isTrainingMode) return;
+    const stickSession = host.getSession() as unknown as StickmanDuelSession;
+    action(stickSession);
+    setTrainingState(stickSession.getTrainingState());
+    host.syncHudNow();
+  };
+
   return (
     <div
       className={`h-full w-full overflow-hidden flex flex-col bg-[var(--background)] text-[var(--foreground)] select-none ${
         settingsOverlayOpen ? 'hidden' : ''
       }`}
     >
+      {/* 火柴人专项练习顶栏控制台（锚定于画布上方，绝不遮挡战斗视野） */}
+      {isTrainingMode && trainingState && (
+        <StickmanTrainingConsole
+          state={trainingState}
+          paused={paused}
+          compactDefault={isMobileOrTablet}
+          onSelectDrill={(drill) => runTrainingAction((s) => s.setTrainingDrill(drill))}
+          onUpdateConfig={(patch) => runTrainingAction((s) => s.updateTrainingConfig(patch))}
+          onDispenseItem={(kind, mode) =>
+            runTrainingAction((s) => s.dispenseTrainingItem(kind, mode))
+          }
+          onClearPickups={() => runTrainingAction((s) => s.clearTrainingPickups())}
+          onTriggerVolley={() => runTrainingAction((s) => s.triggerTrainingVolley())}
+          onResetArena={() => runTrainingAction((s) => s.resetTrainingArena(true))}
+        />
+      )}
+
       {/* 主战迷宫画布区域（桌面端无顶部栏和侧边悬浮卡片遮挡） */}
       <div className="relative flex-1 min-h-0 w-full">
         <canvas
@@ -413,11 +456,13 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
             <div className="w-full max-w-sm max-h-[94%] overflow-y-auto bg-[var(--overlay)] border border-[var(--border)] text-[var(--foreground)] rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4">
               <div className="text-center space-y-1">
                 <h2 className="font-display text-2xl font-extrabold text-[var(--foreground)]">
-                  已暂停
+                  {isTrainingMode ? '练习已暂停' : '已暂停'}
                 </h2>
                 <p className="text-xs text-[var(--muted)]">
                   {pauseReason === 'background'
                     ? '页面切入后台已自动暂停'
+                    : isTrainingMode
+                    ? '道场模拟与发球机已冻结'
                     : '计时与弹药补给均已冻结'}
                 </p>
               </div>
@@ -784,6 +829,8 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     controlMode={controlMode}
                     align="left"
                     slotPrefix="p1"
+                    isTrainingMode={isTrainingMode}
+                    trainingDrill={trainingState?.drill}
                   />
                 )}
               </div>
@@ -801,11 +848,13 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     </span>
                   )}
                   <span className="text-[11px] font-bold text-[var(--foreground)] whitespace-nowrap">
-                    第 {hud?.roundNumber ?? 1} 回合
+                    {isTrainingMode ? '练习道场' : `第 ${hud?.roundNumber ?? 1} 回合`}
                   </span>
-                  <span className="text-[10px] text-[var(--muted)] whitespace-nowrap">
-                    /{hud?.targetScore ?? 5}分
-                  </span>
+                  {!isTrainingMode && (
+                    <span className="text-[10px] text-[var(--muted)] whitespace-nowrap">
+                      /{hud?.targetScore ?? 5}分
+                    </span>
+                  )}
                   <span
                     className={`text-xs font-mono-num font-extrabold ${
                       clockWarning ? 'text-red-600 dark:text-red-400' : 'text-[var(--foreground)]'
@@ -906,6 +955,8 @@ export function GameViewport<TRules = Record<string, unknown>, TWorld = unknown>
                     controlMode={controlMode}
                     align="right"
                     slotPrefix="p2"
+                    isTrainingMode={isTrainingMode}
+                    trainingDrill={trainingState?.drill}
                   />
                 )}
               </div>
@@ -924,6 +975,8 @@ function BottomPlayerHudStrip({
   controlMode,
   align,
   slotPrefix,
+  isTrainingMode = false,
+  trainingDrill,
 }: {
   player: PlayerHudEntry;
   config?: PlayerConfig;
@@ -931,15 +984,19 @@ function BottomPlayerHudStrip({
   controlMode?: unknown;
   align: 'left' | 'right';
   slotPrefix: 'p1' | 'p2';
+  isTrainingMode?: boolean;
+  trainingDrill?: string;
 }) {
   const isRight = align === 'right';
   const showPips = player.maxAmmo <= 12;
+  const isTrainingDummy = Boolean(isTrainingMode && slotPrefix === 'p2');
   const isAi = config?.controller === 'ai';
   const isCustom = isAi && config?.aiSource === 'custom';
   const isBoss = isAi && !isCustom && config?.aiModelId === 'hellbringer';
   const hasFault =
     runtimeStatus && (runtimeStatus.state === 'timeout' || runtimeStatus.state === 'error');
-  const keyHint = !isAi && config ? buildCompactMatchKeyHint(config, controlMode) : null;
+  const keyHint =
+    !isAi && !isTrainingDummy && config ? buildCompactMatchKeyHint(config, controlMode) : null;
 
   return (
     <div
@@ -947,7 +1004,7 @@ function BottomPlayerHudStrip({
         isRight ? 'flex-row-reverse text-right' : 'flex-row text-left'
       }`}
     >
-      {/* 紧凑得分方块 */}
+      {/* 紧凑得分方块（练习模式下展示道场/不死标识） */}
       <div
         className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-white shadow-xs"
         style={{
@@ -955,7 +1012,7 @@ function BottomPlayerHudStrip({
         }}
       >
         <span className="text-lg font-display font-extrabold font-mono-num leading-none">
-          {player.score}
+          {isTrainingDummy ? '∞' : isTrainingMode ? '练' : player.score}
         </span>
       </div>
 
@@ -1006,6 +1063,13 @@ function BottomPlayerHudStrip({
                   · {runtimeStatus.state === 'timeout' ? '超时' : '异常'}
                 </span>
               )}
+            </span>
+          ) : isTrainingDummy ? (
+            <span
+              data-testid="training-dummy-hud-badge"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--surface-secondary)] border border-[var(--border)] text-[10px] font-semibold text-[var(--muted)] whitespace-nowrap shrink-0"
+            >
+              {trainingDrill === 'parry' ? '发球机 · 斩弹演练' : '不死假人 · 自动回血'}
             </span>
           ) : keyHint ? (
             <span

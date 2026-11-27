@@ -7,6 +7,7 @@ import {
 } from '../simulation/combat';
 import type {
   GroundPickup,
+  LocalImpactWave,
   ProjectileTrailEffect,
   StickFighter,
   StickmanDuelRules,
@@ -149,13 +150,14 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     const offsetX = (this.cssWidth - drawW) * 0.5;
     const offsetY = (this.cssHeight - drawH) * 0.5;
 
-    // 方向性打击震屏偏移
+    // 克制平滑的单向微推震屏（仅火箭大爆破/KO/爆头触发，去除高频眩晕晃动）
     let shakeX = 0;
     let shakeY = 0;
-    if (world.shakeIntensity > 0.2) {
-      const jitter = (Math.sin(this.elapsedVisual * 78) + Math.cos(this.elapsedVisual * 113)) * 0.5;
-      shakeX = (world.shakeDirX * 0.65 + jitter * 0.55) * world.shakeIntensity;
-      shakeY = (world.shakeDirY * 0.65 + Math.cos(this.elapsedVisual * 95) * 0.45) * world.shakeIntensity;
+    if (world.shakeIntensity > 0.15) {
+      const settle = Math.cos(this.elapsedVisual * 34);
+      const damp = 0.72 + settle * 0.28;
+      shakeX = world.shakeDirX * world.shakeIntensity * damp;
+      shakeY = world.shakeDirY * world.shakeIntensity * damp;
     }
 
     ctx.save();
@@ -168,15 +170,19 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     ctx.clip();
 
     this.drawBackdrop(ctx, worldW, worldH, palette);
-    this.drawTerrain(ctx, world.terrain, palette);
+    this.drawTerrain(ctx, world.terrain, world.impactWaves, palette);
     this.drawPickups(ctx, world, palette);
     this.drawSlashes(ctx, world);
     this.drawProjectileTrails(ctx, world.projectileTrails);
     this.drawFighters(ctx, world, palette);
     this.drawProjectiles(ctx, world.projectiles);
     this.drawExplosions(ctx, world);
+    this.drawLocalImpactWaves(ctx, world.impactWaves);
     this.drawParticles(ctx, world);
     this.drawOverheadHud(ctx, world, palette);
+    if (world.training) {
+      this.drawTrainingOverlays(ctx, world, palette);
+    }
     this.drawFloatingTexts(ctx, world);
 
     if (this.debugMode) {
@@ -238,20 +244,79 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     ctx.stroke();
   }
 
+  /**
+   * 计算某世界坐标在当前所有局部打击波下的场景位移与受激高亮强度。
+   * 远离命中点的砖块/平台保持完全静止，仅命中点附近局部震动弹跳。
+   */
+  private sampleLocalSceneTremor(
+    wx: number,
+    wy: number,
+    waves: LocalImpactWave[]
+  ): { dx: number; dy: number; flash: number; color: string } {
+    let dx = 0;
+    let dy = 0;
+    let flash = 0;
+    let color = '#FEF08A';
+    for (let i = 0; i < waves.length; i += 1) {
+      const w = waves[i];
+      const rx = wx - w.x;
+      const ry = wy - w.y;
+      const distSq = rx * rx + ry * ry;
+      const maxR = w.radius;
+      if (distSq >= maxR * maxR) continue;
+      const dist = Math.sqrt(distSq);
+      const progress = clamp(w.age / Math.max(0.01, w.maxAge), 0, 1);
+      const decay = 1 - progress;
+      const radial = 1 - dist / maxR;
+      const falloff = radial * radial * decay;
+      // 阻尼震荡波：向外推挤并伴随一次紧致回弹
+      const osc = Math.cos(w.age * 52 - dist * 0.065);
+      const invLen = dist > 1 ? 1 / dist : 0;
+      const pushX = dist > 1 ? rx * invLen * 0.65 + w.dirX * 0.35 : w.dirX;
+      const pushY = dist > 1 ? ry * invLen * 0.65 + w.dirY * 0.35 : w.dirY;
+      const amp = w.strength * falloff * (0.55 + 0.45 * osc);
+      dx += pushX * amp;
+      dy += pushY * amp;
+      if (falloff > flash) {
+        flash = falloff;
+        color = w.color;
+      }
+    }
+    return {
+      dx: clamp(dx, -7.5, 7.5),
+      dy: clamp(dy, -7.5, 7.5),
+      flash: clamp(flash, 0, 1),
+      color,
+    };
+  }
+
   private drawTerrain(
     ctx: CanvasRenderingContext2D,
     terrain: StickmanTerrain,
+    impactWaves: LocalImpactWave[],
     palette: Palette
   ): void {
     const ts = terrain.tileSize;
+    const hasWaves = impactWaves.length > 0;
 
     for (let r = 0; r < terrain.rows; r += 1) {
       for (let c = 0; c < terrain.cols; c += 1) {
         const tile = getTile(terrain, c, r);
         if (tile === 'empty') continue;
 
-        const x = c * ts;
-        const y = r * ts;
+        let x = c * ts;
+        let y = r * ts;
+        let localFlash = 0;
+        let flashColor = '#FEF08A';
+        if (hasWaves) {
+          const tremor = this.sampleLocalSceneTremor(x + ts * 0.5, y + ts * 0.5, impactWaves);
+          // 底层不可破坏基岩振幅减半，仅表层微震；砖块与短平台随冲击波轻弹
+          const tileScale = tile === 'bedrock' ? 0.38 : tile === 'platform' ? 0.95 : 0.85;
+          x += tremor.dx * tileScale;
+          y += tremor.dy * tileScale;
+          localFlash = tremor.flash;
+          flashColor = tremor.color;
+        }
         const variant = terrain.variants[r * terrain.cols + c] ?? 0;
 
         if (tile === 'bedrock') {
@@ -364,6 +429,17 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
           ctx.fillStyle = 'rgba(255,255,255,0.22)';
           ctx.fillRect(x + 5, y + 5, ts - 10, 1.5);
         }
+
+        // 命中点紧邻砖块/平台的受激亮边反馈，强化人物附近局部场景打击感
+        if (localFlash > 0.24) {
+          ctx.save();
+          ctx.globalAlpha = Math.min(0.45, (localFlash - 0.24) * 0.65);
+          ctx.strokeStyle = flashColor;
+          ctx.lineWidth = 1.6;
+          const h = tile === 'platform' ? 11 : ts;
+          ctx.strokeRect(x + 1, y + 1, ts - 2, h - 2);
+          ctx.restore();
+        }
       }
     }
   }
@@ -382,8 +458,12 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
 
     for (const drop of world.pickups) {
       const bob = drop.onGround ? Math.sin(this.elapsedVisual * 4.2 + drop.id * 1.7) * 3.5 : 0;
-      const cx = drop.x;
-      const cy = drop.y - 12 + bob;
+      const tremor =
+        world.impactWaves.length > 0
+          ? this.sampleLocalSceneTremor(drop.x, drop.y - 12, world.impactWaves)
+          : null;
+      const cx = drop.x + (tremor ? tremor.dx * 0.9 : 0);
+      const cy = drop.y - 12 + bob + (tremor ? tremor.dy * 0.9 : 0);
       const accent = PICKUP_ACCENTS[drop.kind];
       const highlighted = highlightedIds.has(drop.id);
 
@@ -621,15 +701,43 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
           : 0.82
         : 1;
 
+    // 计算人物级局部受击/后坐力颤动与挤压形变（顿帧期间依然高频微震，打击感极强且不晃全屏）
+    let localShakeX = 0;
+    let localShakeY = 0;
+    let impactScaleX = 1;
+    let impactScaleY = 1;
+    if (f.impactShakeTimer > 0 && f.impactShakeIntensity > 0.1) {
+      const ratio = clamp(f.impactShakeTimer / Math.max(0.04, f.impactShakeMax), 0, 1);
+      const vib = Math.sin(this.elapsedVisual * 115 + f.x * 0.13);
+      const perpX = -f.impactDirY;
+      const perpY = f.impactDirX;
+      const amp = f.impactShakeIntensity * ratio;
+      localShakeX = (f.impactDirX * 0.65 + perpX * vib * 0.72) * amp;
+      localShakeY = (f.impactDirY * 0.55 + perpY * vib * 0.55) * amp;
+      // 方向性受击挤压/拉伸弹性形变（水平受击时横向微压、纵向微拉）
+      const deform = clamp(amp * 0.022, 0, 0.19) * ratio;
+      const horizBias = Math.abs(f.impactDirX) >= Math.abs(f.impactDirY) ? 1 : -1;
+      impactScaleX = 1 - horizBias * deform;
+      impactScaleY = 1 + horizBias * deform * 0.85;
+    }
+
     // 脚底接触阴影（仅存活且贴近地面/空中柔和缩放）
     if (f.alive) {
       ctx.fillStyle = palette.dark ? 'rgba(0,0,0,0.42)' : 'rgba(28,33,39,0.18)';
       ctx.beginPath();
-      ctx.ellipse(f.x, f.y + 1, f.onGround ? 15 : 9, f.onGround ? 4 : 2.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(
+        f.x + localShakeX * 0.4,
+        f.y + 1,
+        f.onGround ? 15 : 9,
+        f.onGround ? 4 : 2.5,
+        0,
+        0,
+        Math.PI * 2
+      );
       ctx.fill();
     }
 
-    // 飘动头巾（世界坐标绘制，提供强烈动势与玩家颜色辨识）
+    // 飘动头巾（世界坐标绘制，叠加人物受击局部颤动保持首尾同步）
     if (f.scarf.length >= 2) {
       ctx.save();
       ctx.globalAlpha = f.alive ? 0.95 * invulnAlpha : Math.max(0.15, 1 - f.koTimer * 0.7);
@@ -638,9 +746,10 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.lineJoin = 'round';
       ctx.lineWidth = 5.2;
       ctx.beginPath();
-      ctx.moveTo(f.scarf[0].x, f.scarf[0].y);
+      ctx.moveTo(f.scarf[0].x + localShakeX, f.scarf[0].y + localShakeY);
       for (let i = 1; i < f.scarf.length; i += 1) {
-        ctx.lineTo(f.scarf[i].x, f.scarf[i].y);
+        const w = 1 - i / f.scarf.length;
+        ctx.lineTo(f.scarf[i].x + localShakeX * w, f.scarf[i].y + localShakeY * w);
       }
       ctx.stroke();
       ctx.restore();
@@ -658,8 +767,14 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       this.drawAimGuide(ctx, f, rules);
     }
 
-    // 移动到角色锚点（脚底中心）
-    ctx.translate(f.x, f.y);
+    // 移动到角色锚点（脚底中心 + 人物局部受击抖动）
+    ctx.translate(f.x + localShakeX, f.y + localShakeY);
+
+    if (impactScaleX !== 1 || impactScaleY !== 1) {
+      ctx.translate(0, -24);
+      ctx.scale(impactScaleX, impactScaleY);
+      ctx.translate(0, 24);
+    }
 
     if (!f.alive) {
       ctx.globalAlpha = Math.max(0.22, 1 - f.koTimer * 0.45);
@@ -1304,6 +1419,82 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
     }
   }
 
+  /**
+   * 绘制命中点、斩弹点与爆心周围的局部冲击环与短芒打击线，
+   * 让每一次受击与格挡都在局部空间内“炸开”，无需抖动整块画面。
+   */
+  private drawLocalImpactWaves(
+    ctx: CanvasRenderingContext2D,
+    waves: LocalImpactWave[]
+  ): void {
+    for (const w of waves) {
+      const p = clamp(w.age / Math.max(0.01, w.maxAge), 0, 1);
+      const ease = 1 - Math.pow(1 - p, 3);
+      const alpha = (1 - p) * (w.kind === 'muzzle' ? 0.52 : 0.85);
+      if (alpha <= 0.02) continue;
+
+      ctx.save();
+      ctx.translate(w.x, w.y);
+      ctx.globalAlpha = alpha;
+
+      if (w.kind === 'parry') {
+        // 斩弹「叮！」：双层天蓝音爆环 + 锐利十字星芒
+        const r = 10 + ease * 38;
+        ctx.strokeStyle = '#E0F2FE';
+        ctx.lineWidth = Math.max(1.2, 3.4 * (1 - p));
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#38BDF8';
+        ctx.lineWidth = Math.max(1, 2.2 * (1 - p));
+        const rayLen = 14 + ease * 18;
+        ctx.beginPath();
+        ctx.moveTo(-rayLen, 0);
+        ctx.lineTo(rayLen, 0);
+        ctx.moveTo(0, -rayLen);
+        ctx.lineTo(0, rayLen);
+        ctx.stroke();
+      } else if (w.kind === 'muzzle') {
+        // 枪口/火箭喷口方向性短弧冲击波
+        const ang = Math.atan2(w.dirY, w.dirX);
+        const r = 8 + ease * 26;
+        ctx.strokeStyle = w.color;
+        ctx.lineWidth = Math.max(1, 2.6 * (1 - p));
+        ctx.beginPath();
+        ctx.arc(0, 0, r, ang - 0.85, ang + 0.85);
+        ctx.stroke();
+      } else {
+        // 受击/爆破局部冲击环 + 沿受力方向散射的漫画短芒打击线
+        const maxRing = w.kind === 'blast' ? Math.min(w.radius * 0.72, 125) : Math.min(w.radius * 0.45, 52);
+        const r = 8 + ease * maxRing;
+        ctx.strokeStyle = w.color;
+        ctx.lineWidth = Math.max(1.2, (w.kind === 'blast' ? 4.2 : 3.2) * (1 - p));
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // 局部放射短芒（沿冲击方向偏置）
+        const baseAng = Math.atan2(w.dirY, w.dirX);
+        const rays = w.kind === 'blast' ? 6 : 4;
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = Math.max(1, 2.2 * (1 - p));
+        ctx.lineCap = 'round';
+        for (let i = 0; i < rays; i += 1) {
+          const a = baseAng + ((i - (rays - 1) * 0.5) * 0.62);
+          const inner = r * 0.62;
+          const outer = r * 1.16 + 5;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+          ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
+          ctx.stroke();
+        }
+      }
+
+      ctx.restore();
+    }
+  }
+
   private drawParticles(ctx: CanvasRenderingContext2D, world: StickmanWorld): void {
     for (const pt of world.particles) {
       const life = 1 - clamp(pt.age / Math.max(0.01, pt.maxAge), 0, 1);
@@ -1352,14 +1543,25 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.globalAlpha = f.alive ? 0.96 : Math.max(0, 1 - f.koTimer);
 
       // 名称与当前手持武器角标
+      const isTrainingPlayer =
+        Boolean(world.training) && f.slotId === world.fighters[0]?.slotId;
+      const isTrainingDummy =
+        Boolean(world.training) && f.slotId === world.fighters[1]?.slotId;
       const weaponTag = f.weapon
-        ? ` · ${PICKUP_LABELS[f.weapon.kind][0]}${f.weapon.remaining}`
+        ? ` · ${PICKUP_LABELS[f.weapon.kind][0]}${
+            world.training?.infiniteWeapon && isTrainingPlayer ? '∞' : f.weapon.remaining
+          }`
         : '';
-      const label = `${f.config.displayName}${weaponTag}`;
+      const displayName = isTrainingDummy
+        ? world.training?.drill === 'parry'
+          ? '发球机'
+          : '不死假人'
+        : f.config.displayName;
+      const label = `${displayName}${weaponTag}`;
       ctx.font = '700 10px system-ui, -apple-system, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const labelW = Math.max(barW, ctx.measureText(label).width + 10);
+      const labelW = Math.max(barW, ctx.measureText(label).width + 18);
 
       ctx.fillStyle = palette.namePlateBg;
       ctx.beginPath();
@@ -1368,11 +1570,11 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
 
       ctx.fillStyle = f.config.colorHex;
       ctx.beginPath();
-      ctx.arc(f.x - labelW * 0.5 + 5.5, topY - 8.5, 2.6, 0, Math.PI * 2);
+      ctx.arc(f.x - labelW * 0.5 + 6.5, topY - 8.5, 2.5, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.fillStyle = palette.namePlateText;
-      ctx.fillText(label, f.x + 2, topY - 8.2);
+      ctx.fillText(label, f.x + 4.5, topY - 8.2);
 
       // 双层血条：底槽 + 白色缓冲扣血条 + 实际血量条
       ctx.fillStyle = palette.hpTrack;
@@ -1421,6 +1623,140 @@ export class StickmanDuelRenderer implements GameRenderer<StickmanWorld> {
       ctx.fillText(ft.text, 0, 0);
       ctx.restore();
     }
+  }
+
+  private drawTrainingOverlays(
+    ctx: CanvasRenderingContext2D,
+    world: StickmanWorld,
+    palette: Palette
+  ): void {
+    const tr = world.training;
+    const player = world.fighters[0];
+    const dummy = world.fighters[1];
+    if (!tr) return;
+
+    ctx.save();
+
+    // 1. 假人头 / 躯干 / 腿脚部位伤害判定辅助线（爆头专练默认开启，随时可切换）
+    if (tr.showHitZones && dummy && dummy.alive) {
+      const topY = dummy.y - dummy.height;
+      const headLineY = topY + dummy.height * 0.28;
+      const legsLineY = topY + dummy.height * 0.72;
+      const leftX = dummy.x - dummy.halfWidth - 8;
+      const rightX = dummy.x + dummy.halfWidth + 8;
+
+      // 头部 1.5x 高危暴击高亮区
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.14)';
+      ctx.fillRect(leftX, topY, rightX - leftX, headLineY - topY);
+
+      // 腿脚 0.6x 减伤区
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.12)';
+      ctx.fillRect(leftX, legsLineY, rightX - leftX, dummy.y - legsLineY);
+
+      // 部位分隔虚线
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.85)';
+      ctx.beginPath();
+      ctx.moveTo(leftX - 4, headLineY);
+      ctx.lineTo(rightX + 4, headLineY);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.78)';
+      ctx.beginPath();
+      ctx.moveTo(leftX - 4, legsLineY);
+      ctx.lineTo(rightX + 4, legsLineY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 头部瞄准准星圈
+      const headCenterY = topY + dummy.height * 0.14;
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.72)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(dummy.x, headCenterY, 10, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 右侧极简倍率标注
+      ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const labelX = rightX + 8;
+
+      ctx.fillStyle = '#EF4444';
+      ctx.fillText('头 1.5×', labelX, topY + dummy.height * 0.14);
+      ctx.fillStyle = palette.dark ? '#CBD5E1' : '#334155';
+      ctx.fillText('身 1.0×', labelX, topY + dummy.height * 0.5);
+      ctx.fillStyle = '#64748B';
+      ctx.fillText('脚 0.6×', labelX, topY + dummy.height * 0.86);
+    }
+
+    // 2. 砍子弹专练发球预警线：明确区分「可斩弹（天蓝）」与「火箭不可砍（猩红）」
+    if (tr.parryTelegraphTimer > 0 && dummy && player && dummy.alive && player.alive) {
+      const isRocket = tr.parryNextKind === 'rocket';
+      const pulse = 0.55 + 0.45 * Math.sin(this.elapsedVisual * 28);
+      const ox = dummy.x + dummy.aimX * 22;
+      const oy = dummy.y - dummy.height * 0.62 + dummy.aimY * 18;
+      const tx = player.x;
+      const ty = player.y - player.height * 0.56;
+
+      ctx.strokeStyle = isRocket
+        ? `rgba(239, 68, 68, ${0.42 + pulse * 0.45})`
+        : `rgba(56, 189, 248, ${0.38 + pulse * 0.42})`;
+      ctx.lineWidth = isRocket ? 2.4 : 1.8;
+      ctx.setLineDash(isRocket ? [8, 5] : [5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 枪口充能光点
+      ctx.fillStyle = isRocket ? '#EF4444' : '#38BDF8';
+      ctx.beginPath();
+      ctx.arc(ox, oy, 4 + pulse * 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 假人头顶简短预警提示
+      const warnText = isRocket
+        ? '火箭不可砍 · 跳闪!'
+        : `即将发射 ${PICKUP_LABELS[tr.parryNextKind]}`;
+      ctx.font = '700 11px system-ui, -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const w = Math.max(92, ctx.measureText(warnText).width + 16);
+      const bx = clamp(dummy.x, w * 0.5 + 12, world.terrain.width - w * 0.5 - 12);
+      const by = dummy.y - dummy.height - 54;
+      ctx.fillStyle = isRocket ? 'rgba(153, 27, 27, 0.92)' : 'rgba(12, 74, 110, 0.92)';
+      ctx.beginPath();
+      ctx.roundRect(bx - w * 0.5, by - 10, w, 20, 6);
+      ctx.fill();
+      ctx.fillStyle = '#F8FAFC';
+      ctx.fillText(warnText, bx, by + 0.5);
+    }
+
+    // 3. 实时格斗连击浮标（位于右上角安全留白区，不遮挡中场交锋）
+    if (tr.stats.comboHits >= 2) {
+      const rx = world.terrain.width - 28;
+      const ry = 44;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.font = '900 32px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = palette.dark ? 'rgba(9, 13, 22, 0.9)' : 'rgba(255, 255, 255, 0.92)';
+      const hitLabel = `${tr.stats.comboHits} HIT`;
+      ctx.strokeText(hitLabel, rx, ry);
+      ctx.fillStyle = tr.stats.comboHits >= 5 ? '#EF4444' : '#F59E0B';
+      ctx.fillText(hitLabel, rx, ry);
+
+      ctx.font = '700 13px ui-monospace, SFMono-Regular, Menlo, monospace';
+      const dmgLabel = `${tr.stats.comboDamage} DMG`;
+      ctx.strokeText(dmgLabel, rx, ry + 36);
+      ctx.fillStyle = palette.dark ? '#E2E8F0' : '#1E293B';
+      ctx.fillText(dmgLabel, rx, ry + 36);
+    }
+
+    ctx.restore();
   }
 
   private drawDebugOverlay(ctx: CanvasRenderingContext2D, world: StickmanWorld): void {

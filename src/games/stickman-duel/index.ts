@@ -27,6 +27,7 @@ export const stickmanDuelGame: GameDefinition<StickmanDuelRules, StickmanWorld> 
   defaultPlayerCount: 2,
   rulesVersion: STICKMAN_RULES_VERSION,
   virtualGamepadLayout: 'abxy',
+  supportsTraining: true,
   actions: [
     { id: 'moveLeft', label: '左移 / 左瞄' },
     { id: 'moveRight', label: '右移 / 右瞄' },

@@ -272,6 +272,8 @@ export interface HudState {
   mapCode: string;
   players: PlayerHudEntry[];
   roundBanner: RoundBannerInfo | null;
+  /** 可选自定义 HUD 变更签名（如练习模式统计/配置刷新） */
+  customSignature?: string;
 }
 
 export interface RoundResultEvent {
@@ -464,6 +466,9 @@ export interface MatchLaunchSnapshot<TRules = Record<string, unknown>> {
   sessionSeed: number;
   gameMode?: GameMode;
   singleMatchup?: SingleMatchup;
+  /** 可选：启用专项练习关卡（不死假人、自由发放道具、专项统计） */
+  trainingMode?: boolean;
+  trainingInitialDrill?: string;
 }
 
 export interface GameSession<TWorld = unknown> {
@@ -517,4 +522,6 @@ export interface GameDefinition<TRules = Record<string, unknown>, TWorld = unkno
   defaultBotModelId?: string;
   /** 可选：跨游戏 AI SDK 适配器（支持 Prompt MD 生成、Worker 观测协议与 120 帧沙箱试跑） */
   aiSdk?: GameAiSdkAdapter<TRules, TWorld, unknown>;
+  /** 可选：是否提供专项练习关卡入口 */
+  supportsTraining?: boolean;
 }

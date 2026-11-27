@@ -379,6 +379,18 @@ export class SessionHost<TRules = Record<string, unknown>, TWorld = unknown> {
     }
   }
 
+  getSession(): GameSession<TWorld> {
+    return this.session;
+  }
+
+  syncHudNow(): void {
+    if (this.destroyed) return;
+    this.publishHudIfChanged(true);
+    if (this.paused) {
+      this.renderer.render(this.ctx, this.session.getWorldState(), 0);
+    }
+  }
+
   private readonly handleVisibilityChange = (): void => {
     if (document.hidden && !this.paused && !this.matchFinishedEmitted) {
       this.pause('background');
@@ -533,6 +545,7 @@ function computeHudSignature(hud: HudState): string {
       ? '-'
       : String(Math.ceil(hud.roundTimeRemainingSeconds)),
     hud.roundBanner ? `${hud.roundBanner.roundNumber}:${hud.roundBanner.reason}:${Math.ceil(hud.roundBanner.nextRoundInSeconds)}` : '-',
+    hud.customSignature ?? '-',
   ];
   for (const p of hud.players) {
     parts.push(

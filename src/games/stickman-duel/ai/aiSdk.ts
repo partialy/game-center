@@ -162,7 +162,34 @@ export function createBot(_ctx: { slotId: string; seed: number; random: () => nu
       if (goalX < self.x - 24) out.moveLeft = true;
       else if (goalX > self.x + 24) out.moveRight = true;
 
-      let wantsJump = goalY < self.y - 48;
+      // 检测前方砖墙/基岩并在一段跳接近顶点时衔接二段跳翻越高墙
+      const ts = obs.terrain?.tileSize || 32;
+      const grid: string[] = obs.terrain?.grid || [];
+      const dir = out.moveRight ? 1 : out.moveLeft ? -1 : self.facing;
+      const isSolid = (c: number, r: number) => {
+        const ch = grid[r]?.[c];
+        return ch === 'B' || ch === '#';
+      };
+      const nearCol = Math.floor((self.x + dir * 18) / ts);
+      const farCol = Math.floor((self.x + dir * (10 + ts * 0.9)) / ts);
+      const footRow = Math.floor((self.y - 4) / ts);
+      const midRow = Math.floor((self.y - 26) / ts);
+      const headRow = Math.floor((self.y - 44) / ts);
+      const blockedAhead =
+        isSolid(nearCol, footRow) ||
+        isSolid(nearCol, midRow) ||
+        isSolid(nearCol, headRow) ||
+        isSolid(farCol, footRow) ||
+        isSolid(farCol, midRow);
+
+      let wantsJump = false;
+      const needHigher = blockedAhead || goalY < self.y - 48;
+      if (self.onGround) {
+        if (needHigher) wantsJump = true;
+      } else if (self.jumpsUsed === 1 && self.vy >= -115 && needHigher) {
+        // 接近一段跳最高点后再起二段跳，避免刚离地就白白消耗二段跳
+        wantsJump = true;
+      }
       if (goalY > self.y + 48 && self.onPlatform) {
         out.aimDown = true;
         wantsJump = true;
@@ -356,7 +383,7 @@ export function buildStickmanPromptMarkdown(
    - \`kick\`（上键/Y）：高位飞踢与强力击飞（持武器时同样可用）
    - \`jump\`（下键/A）：跳跃、空中二段跳，配合 \`aimDown\` 向下穿短平台
    - \`swap\`（右键/B）：拾取或替换身边武器（替换后旧武器保留剩余耐久/弹药掉落地面）
-3. **单次动作上升沿**：\`attack\`、\`kick\`、\`jump\`、\`swap\` 均在从未按下转为按下的上升沿触发，请在下一次决策将其置回 \`false\`。
+3. **单次动作上升沿与高墙二段跳**：\`attack\`、\`kick\`、\`jump\`、\`swap\` 均在从未按下转为按下的上升沿触发，请在下一次决策将其置回 \`false\`；翻越超过单跳高度的砖墙时，请在 \`self.jumpsUsed === 1 && self.vy >= -115\`（接近一段跳顶点）时再触发二段跳。
 ${rulesBlock}
 ## 2. 参考模板
 \`\`\`ts

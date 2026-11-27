@@ -7,6 +7,7 @@ import {
   Gamepad2,
   Play,
   SlidersHorizontal,
+  Target,
 } from 'lucide-react';
 import type {
   ArenaSeatConfig,
@@ -60,6 +61,7 @@ interface PreMatchViewProps<TRules extends Record<string, unknown>> {
   onResetAllRules: () => void;
   onResetGroupRules: (groupId: string) => void;
   onStartMatch: () => void;
+  onStartTraining?: () => void;
 }
 
 /**
@@ -99,6 +101,7 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
   onResetAllRules,
   onResetGroupRules,
   onStartMatch,
+  onStartTraining,
 }: PreMatchViewProps<TRules>) {
   const isBrawl = gameMode === 'brawl';
   const arenaValidation = validateArenaSeats(arenaSeats);
@@ -162,6 +165,19 @@ export function PreMatchView<TRules extends Record<string, unknown>>({
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <ThemeQuickToggle testId="prematch-theme-quick-toggle" />
+
+            {game.supportsTraining && onStartTraining && (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="prematch-training-btn"
+                onPress={onStartTraining}
+                className="h-9 px-3.5 !rounded-full whitespace-nowrap shrink-0 font-semibold"
+              >
+                <Target className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+                练习关卡
+              </Button>
+            )}
 
             {game.aiSdk && (
               <Button

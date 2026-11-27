@@ -4,6 +4,7 @@ import { createStaticInputFrame } from '../../../platform/input/keyboard';
 import { DeterministicRng } from '../../tank-battle/map/rng';
 import {
   buildStickmanTerrain,
+  buildStickmanTrainingTerrain,
   CORNER_PLATFORM_SPECS,
   destroySingleNearestTile,
   destroyTerrainInRadius,
@@ -22,7 +23,49 @@ import {
   resolveProjectileHitZone,
   swapFighterWeapon,
 } from './combat';
+import {
+  evaluateWallClimbJump,
+  STICKMAN_BOT_MODELS,
+} from '../ai/botScripts';
+import {
+  computeHeadshotRatePercent,
+  pickNextParryShotKind,
+} from './training';
 import { StickmanDuelSession } from './world';
+
+function createTrainingTestSession(initialDrill?: 'free' | 'headshot' | 'parry' | 'combo') {
+  const rules = {
+    ...getDefaultStickmanRules(),
+    countdownSeconds: 3,
+    roundTimeLimitEnabled: true,
+  };
+  return new StickmanDuelSession({
+    gameId: 'stickman-duel',
+    rulesVersion: 1,
+    rules,
+    trainingMode: true,
+    trainingInitialDrill: initialDrill,
+    players: [
+      {
+        slotId: 'p1',
+        displayName: 'P1',
+        rawName: 'P1',
+        colorHex: '#E04B32',
+        bindings: {},
+        controller: 'human',
+      },
+      {
+        slotId: 'p2',
+        displayName: '不死假人',
+        rawName: 'DUMMY',
+        colorHex: '#64748B',
+        bindings: {},
+        controller: 'human',
+      },
+    ],
+    sessionSeed: 20260708,
+  });
+}
 
 function createTestSession(overrides?: Partial<ReturnType<typeof getDefaultStickmanRules>>) {
   const rules = {
@@ -994,4 +1037,414 @@ test('碎片手雷默认 2 颗，8 方向抛物线投掷，碰物触发约一格
   assert.equal(remainingBricks, 3, '碎片手雷小爆破应仅炸毁命中的单个砖块（4 -> 3）');
   assert.equal(p2.hp, 200, '碎片手雷一格小爆破不应波及远处角色');
 });
+
+test('练习关卡：道场地形、不死假人防淘汰、自动回血与一键重置修复砖墙', () => {
+  const dojo = buildStickmanTrainingTerrain(12345);
+  assert.equal(getTile(dojo, 28, 15), 'brick', '练习道场右侧应布置可破坏砖墙靶区');
+  assert.equal(getTile(dojo, 15, 10), 'platform', '练习道场中空应布置单向短平台');
+  assert.equal(getTile(dojo, 0, STICKMAN_GRID_ROWS - 1), 'bedrock', '最底行恒为基岩');
+
+  const session = createTrainingTestSession('free');
+  const world = session.getWorldState();
+  assert.equal(session.isTrainingMode(), true);
+  assert.equal(world.phase, 'playing', '练习关卡应跳过倒计时直入实战');
+  assert.equal(world.roundTimeRemainingSeconds, null, '练习关卡不设回合倒计时上限');
+  assert.equal(world.mapCode, 'DOJO-TRAIN');
+
+  const [p1, dummy] = world.fighters;
+  // 连续重创不死假人至血量归零：应立刻满血恢复，绝不淘汰、绝不结束回合
+  dummy.hp = 10;
+  p1.x = dummy.x - 40;
+  p1.y = dummy.y;
+  p1.facing = 1;
+  session.dispenseTrainingItem('sword', 'equip');
+
+  const res = session.step(
+    1 / 60,
+    createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } })
+  );
+  assert.equal(res.roundResult, undefined);
+  for (let i = 0; i < 8; i += 1) {
+    world.hitstopTimer = 0;
+    const stepRes = session.step(1 / 60, createStaticInputFrame({}));
+    assert.equal(stepRes.roundResult, undefined, '练习关卡绝不应触发回合结束');
+    assert.equal(stepRes.matchResult, undefined, '练习关卡绝不应触发比赛结束');
+  }
+  assert.equal(dummy.alive, true, '不死假人血量清零后必须保持存活');
+  assert.equal(dummy.hp, dummy.maxHp, '不死假人血量归零后应立刻回满继续连招');
+
+  // 破坏右侧练习砖墙后调用 resetTrainingArena 应完整修复
+  setTile(world.terrain, 28, 15, 'empty');
+  assert.equal(getTile(world.terrain, 28, 15), 'empty');
+  session.resetTrainingArena(true);
+  assert.equal(getTile(world.terrain, 28, 15), 'brick', '一键重置场地应修复被炸毁的练习砖墙');
+  assert.equal(session.getTrainingState()?.stats.totalHits, 0, '重置场地应清空专项统计');
+});
+
+test('练习关卡：随意发放全部道具（直接装备/空投到场/切空手）与无限弹药开关', () => {
+  const session = createTrainingTestSession('free');
+  const world = session.getWorldState();
+  const [p1] = world.fighters;
+
+  // 1. 直接装备各种武器 + 血包回血 + 切空手
+  session.dispenseTrainingItem('shotgun', 'equip');
+  assert.equal(p1.weapon?.kind, 'shotgun');
+  assert.equal(p1.weapon?.remaining, 2);
+
+  session.dispenseTrainingItem('grenade', 'equip');
+  assert.equal(p1.weapon?.kind, 'grenade');
+  assert.equal(p1.weapon?.remaining, 2);
+
+  p1.hp = 45;
+  session.dispenseTrainingItem('medkit', 'equip');
+  assert.equal(p1.hp, p1.maxHp, '直接发放血包应立即恢复满血');
+
+  session.dispenseTrainingItem('unarmed', 'equip');
+  assert.equal(p1.weapon, null, '切空手应清空武器槽');
+
+  // 2. 空投到场生成真实物理拾取物，并可一键清空
+  session.dispenseTrainingItem('rocket', 'drop');
+  session.dispenseTrainingItem('sword', 'drop');
+  assert.equal(world.pickups.length, 2, '空投到场应向竞技场生成真实掉落道具');
+  session.clearTrainingPickups();
+  assert.equal(world.pickups.length, 0, '清空道具应移除场上掉落物');
+
+  // 3. 无限弹药开启时发射手枪不扣弹药
+  session.dispenseTrainingItem('pistol', 'equip');
+  session.updateTrainingConfig({ infiniteWeapon: true });
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 6; i += 1) {
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  const refreshedP1 = session.getWorldState().fighters[0];
+  assert.equal(refreshedP1.weapon?.kind, 'pistol');
+  assert.equal(refreshedP1.weapon?.remaining, 3, '开启无限弹药后开火不应扣除手枪子弹');
+});
+
+test('练习关卡：爆头专练、砍子弹发球机与连招木桩专项统计准确无误', () => {
+  const session = createTrainingTestSession('headshot');
+  const world = session.getWorldState();
+  const [p1, dummy] = world.fighters;
+
+  // 1. 爆头专练默认装备手枪 + 无限弹药 + 显示部位判定线
+  const hsInit = session.getTrainingState()!;
+  assert.equal(hsInit.drill, 'headshot');
+  assert.equal(hsInit.showHitZones, true);
+  assert.equal(hsInit.infiniteWeapon, true);
+  assert.equal(p1.weapon?.kind, 'pistol');
+
+  // 向假人头部发射 1 发手枪子弹并验证爆头统计
+  world.projectiles.push({
+    id: 9001,
+    kind: 'pistol',
+    ownerSlotId: 'p1',
+    colorHex: '#E04B32',
+    originX: dummy.x - 100,
+    originY: dummy.y - dummy.height + 5,
+    x: dummy.x - 30,
+    y: dummy.y - dummy.height + 5,
+    prevX: dummy.x - 40,
+    prevY: dummy.y - dummy.height + 5,
+    vx: 700,
+    vy: 0,
+    radius: 4.5,
+    damage: 25,
+    knockback: 265,
+    gravityScale: 0,
+    age: 0.2,
+    maxAge: 2,
+    blastRadius: 0,
+  });
+  for (let i = 0; i < 6; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  const hsAfter = session.getTrainingState()!;
+  assert.equal(hsAfter.stats.headshots, 1, '击中假人头部应计入爆头次数');
+  assert.equal(hsAfter.stats.headshotStreak, 1);
+  assert.equal(computeHeadshotRatePercent(hsAfter.stats), 100);
+
+  // 2. 切换至砍子弹专练：自动装备长剑，发球机可手动触发发射，挥剑斩弹记录斩弹连击
+  session.setTrainingDrill('parry');
+  assert.equal(p1.weapon?.kind, 'sword');
+  assert.equal(pickNextParryShotKind('mixed', 4), 'rocket', '混合模式第 5 拍应包含不可砍火箭');
+
+  session.triggerTrainingVolley();
+  for (let i = 0; i < 32; i += 1) {
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  assert.ok(
+    world.projectiles.some((pr) => pr.ownerSlotId === 'p2'),
+    '砍子弹发球机预警结束后应朝玩家射出实弹'
+  );
+
+  // 在玩家身前放入一枚来袭子弹并挥剑砍碎
+  world.projectiles.length = 0;
+  p1.facing = 1;
+  world.projectiles.push({
+    id: 9002,
+    kind: 'pistol',
+    ownerSlotId: 'p2',
+    colorHex: '#64748B',
+    originX: dummy.x,
+    originY: p1.y - p1.height * 0.55,
+    x: p1.x + 48,
+    y: p1.y - p1.height * 0.55,
+    prevX: p1.x + 60,
+    prevY: p1.y - p1.height * 0.55,
+    vx: -200,
+    vy: 0,
+    radius: 4.5,
+    damage: 25,
+    knockback: 265,
+    gravityScale: 0,
+    age: 0.2,
+    maxAge: 2,
+    blastRadius: 0,
+  });
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 8; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  const parryAfter = session.getTrainingState()!;
+  assert.equal(parryAfter.stats.parries, 1, '练习模式下斩碎来袭子弹应累加斩弹次数');
+  assert.equal(parryAfter.stats.parryStreak, 1);
+  assert.equal(p1.weapon?.remaining, 5, '砍子弹专练默认无限耐久，斩弹后剑耐久保持满值');
+
+  // 3. 切换至连招木桩：开启 0s 无敌连招并统计多段连击
+  session.setTrainingDrill('combo');
+  session.updateTrainingConfig({ zeroHurtInvuln: true });
+  p1.x = dummy.x - 32;
+  p1.y = dummy.y;
+  p1.facing = 1;
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 16; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  assert.equal(dummy.invulnTimer, 0, '开启 0s 无敌连招后假人受击不应产生无敌帧');
+  const comboAfter = session.getTrainingState()!;
+  assert.ok(comboAfter.stats.comboHits >= 1, '连招木桩应实时统计连击段数');
+  assert.ok(comboAfter.stats.comboDamage > 0, '连招木桩应实时累计本套连招伤害');
+});
+
+test('AI 脚本遇到单跳无法越过的 5 格高墙时，在一段跳顶点附近精准衔接二段跳成功翻越', () => {
+  const session = createTrainingTestSession('free');
+  const world = session.getWorldState();
+  const ts = STICKMAN_TILE_SIZE;
+
+  // 清空中场并在 col=14 筑起 5 格高砖墙（160px > 单跳极限 116px，必须靠二段跳才能翻越）
+  for (let r = 0; r < world.terrain.rows - 1; r += 1) {
+    for (let c = 0; c < world.terrain.cols; c += 1) {
+      setTile(world.terrain, c, r, 'empty');
+    }
+  }
+  const groundY = (world.terrain.rows - 1) * ts;
+  const wallCol = 14;
+  for (let i = 1; i <= 5; i += 1) {
+    setTile(world.terrain, wallCol, world.terrain.rows - 1 - i, 'brick');
+  }
+  const wallTopY = (world.terrain.rows - 6) * ts;
+
+  // 1. 纯逻辑单元测试：刚起跳高速上升期绝不提前挥霍二段跳，接近顶点再触发二段跳
+  const earlyMidAir = evaluateWallClimbJump({
+    terrain: world.terrain,
+    self: {
+      x: wallCol * ts - 18,
+      y: groundY - 24,
+      vy: -430,
+      halfWidth: 10,
+      height: 50,
+      onGround: false,
+      coyoteTimer: 0,
+      jumpsUsed: 1,
+      maxJumps: 2,
+    },
+    lookDir: 1,
+    movingHorizontally: true,
+    goalX: (wallCol + 5) * ts,
+    goalY: groundY,
+    stuckTimer: 0,
+    dodgeJump: false,
+  });
+  assert.equal(earlyMidAir.wantsJump, false, '一段跳刚离地高速上升段绝不可提前挥霍二段跳');
+
+  const nearApex = evaluateWallClimbJump({
+    terrain: world.terrain,
+    self: {
+      x: wallCol * ts - 18,
+      y: groundY - 104,
+      vy: -70,
+      halfWidth: 10,
+      height: 50,
+      onGround: false,
+      coyoteTimer: 0,
+      jumpsUsed: 1,
+      maxJumps: 2,
+    },
+    lookDir: 1,
+    movingHorizontally: true,
+    goalX: (wallCol + 5) * ts,
+    goalY: groundY,
+    stuckTimer: 0,
+    dodgeJump: false,
+  });
+  assert.equal(nearApex.wantsJump, true, '接近一段跳顶点且仍未越过 5 格高墙时应精准触发二段跳');
+
+  // 2. 真实物理闭环验证：让内置 AI 追击墙另一侧对手，必须真正触发二段跳并成功翻越高墙
+  const [aiFighter, target] = world.fighters;
+  aiFighter.x = (wallCol - 2.2) * ts;
+  aiFighter.y = groundY;
+  aiFighter.vx = 0;
+  aiFighter.vy = 0;
+  aiFighter.onGround = true;
+  aiFighter.facing = 1;
+
+  target.x = (wallCol + 4) * ts;
+  target.y = groundY;
+  target.vx = 0;
+  target.vy = 0;
+  target.onGround = true;
+
+  const botModel = STICKMAN_BOT_MODELS.find((m) => m.id === 'stick_hunter') ?? STICKMAN_BOT_MODELS[0];
+  const agent = botModel.createAgent(2026);
+
+  let usedDoubleJump = false;
+  let clearedWallTop = false;
+  let crossedWallX = false;
+  let prevHeld: Record<string, boolean> = {};
+
+  for (let frame = 0; frame < 180; frame += 1) {
+    const intent = agent.decide(world, aiFighter.slotId, 1 / 60);
+    const nextHeld: Record<string, boolean> = {};
+    const frameActions: Record<string, { held: boolean; justPressed: boolean }> = {};
+    for (const key of Object.keys(intent)) {
+      const held = Boolean(intent[key]);
+      if (held) nextHeld[key] = true;
+      frameActions[key] = { held, justPressed: held && !prevHeld[key] };
+    }
+    prevHeld = nextHeld;
+
+    session.step(1 / 60, createStaticInputFrame({ [aiFighter.slotId]: frameActions }));
+    if (aiFighter.jumpsUsed >= 2) usedDoubleJump = true;
+    if (aiFighter.y <= wallTopY + 2) clearedWallTop = true;
+    if (aiFighter.x > (wallCol + 0.5) * ts) {
+      crossedWallX = true;
+      break;
+    }
+  }
+
+  assert.equal(usedDoubleJump, true, 'AI 遇到 5 格高墙时应实际触发空中二段跳');
+  assert.equal(clearedWallTop, true, 'AI 借助二段跳应跃升至 5 格高墙顶部以上');
+  assert.equal(crossedWallX, true, 'AI 应顺利翻越 5 格高墙抵达墙体另一侧');
+});
+
+test('打击感分层：普通攻击/开枪/斩弹优先作用在人物与局部场景震波，避免整屏高频晃动；重爆破克制全屏微震', () => {
+  const session = createTrainingTestSession('free');
+  const world = session.getWorldState();
+  const [p1, dummy] = world.fighters;
+
+  // 1. 普通近战挥拳命中：全屏不晃动，但受击人物产生局部抖动，且命中点产生局部场景震波
+  p1.x = dummy.x - 36;
+  p1.y = dummy.y;
+  p1.facing = 1;
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 6; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  assert.equal(world.shakeIntensity, 0, '普通近战命中不应抖动整个屏幕');
+  assert.ok(dummy.impactShakeTimer > 0 && dummy.impactShakeIntensity >= 3.5, '受击角色应获得局部抖动与挤压反馈');
+  assert.ok(
+    world.impactWaves.some((w) => w.kind === 'hit' && Math.hypot(w.x - dummy.x, w.y - (dummy.y - 25)) < 40),
+    '命中点附近应产生局部场景震波'
+  );
+
+  // 2. 猎枪开火：后坐力反馈作用于开枪者本人与枪口局部震波，全屏保持稳定
+  world.impactWaves.length = 0;
+  session.dispenseTrainingItem('shotgun', 'equip');
+  p1.x = 220;
+  p1.facing = 1;
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 6; i += 1) {
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  assert.equal(world.shakeIntensity, 0, '猎枪开火不应导致全屏晃动');
+  assert.ok(p1.impactShakeTimer > 0, '猎枪开火应触发角色自身后坐力颤动');
+  assert.ok(
+    world.impactWaves.some((w) => w.kind === 'muzzle'),
+    '猎枪枪口应产生局部冲击波'
+  );
+
+  // 3. 长剑斩弹：产生天蓝 parry 局部震波与持剑者局部反馈，不震动整屏
+  world.impactWaves.length = 0;
+  session.dispenseTrainingItem('sword', 'equip');
+  world.projectiles.push({
+    id: 9901,
+    kind: 'pistol',
+    ownerSlotId: 'p2',
+    colorHex: '#64748B',
+    originX: p1.x + 120,
+    originY: p1.y - p1.height * 0.55,
+    x: p1.x + 42,
+    y: p1.y - p1.height * 0.55,
+    prevX: p1.x + 52,
+    prevY: p1.y - p1.height * 0.55,
+    vx: -180,
+    vy: 0,
+    radius: 4.5,
+    damage: 20,
+    knockback: 200,
+    gravityScale: 0,
+    age: 0.1,
+    maxAge: 2,
+    blastRadius: 0,
+  });
+  session.step(1 / 60, createStaticInputFrame({ p1: { attack: { justPressed: true, held: true } } }));
+  for (let i = 0; i < 5; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  assert.equal(world.shakeIntensity, 0, '斩弹格挡不应抖动整个屏幕');
+  assert.ok(
+    world.impactWaves.some((w) => w.kind === 'parry'),
+    '斩弹点应产生局部格挡震波'
+  );
+
+  // 4. 火箭大爆破：全屏仅保留克制的轻微震动（<= 5.2），同时释放大范围局部场景震波
+  world.impactWaves.length = 0;
+  world.projectiles.push({
+    id: 9902,
+    kind: 'rocket',
+    ownerSlotId: 'p1',
+    colorHex: '#E04B32',
+    originX: 500,
+    originY: dummy.y - 30,
+    x: 500,
+    y: dummy.y - 4,
+    prevX: 500,
+    prevY: dummy.y - 16,
+    vx: 0,
+    vy: 420,
+    radius: 7,
+    damage: 45,
+    knockback: 600,
+    gravityScale: 1,
+    age: 0.1,
+    maxAge: 4,
+    blastRadius: 72,
+  });
+  for (let i = 0; i < 4; i += 1) {
+    world.hitstopTimer = 0;
+    session.step(1 / 60, createStaticInputFrame({}));
+  }
+  assert.ok(world.shakeIntensity > 0 && world.shakeIntensity <= 5.2, '火箭大爆破的全屏微震应严格克制在 5.2px 以内');
+  assert.ok(
+    world.impactWaves.some((w) => w.kind === 'blast' && w.radius >= 150),
+    '火箭爆破应在爆心释放大范围局部场景震波'
+  );
+});
+
+
 

@@ -484,10 +484,86 @@ export default function App() {
     ]
   );
 
-  // 支持 ?autostart=1(&mode=single|brawl&seats=6&matchup=ai_vs_ai...) 直达实时对战，或 ?demoResults=1 直达结算页
+  // 启动专项练习关卡（如火柴人决斗：P1 人类 + P2 不死假人，零倒计时直入道场）
+  const launchTraining = useCallback(
+    (
+      game: GameDefinition<Record<string, unknown>, unknown>,
+      initialDrill?: string
+    ) => {
+      const p1Profile = profiles[0] ?? { slotId: 'p1', name: 'P1', colorHex: '#3B82F6' };
+      const gameBindings =
+        game.id === currentGame.id ? bindingsBySlot : loadGameBindings(game).value;
+      const baseRules =
+        game.id === currentGame.id
+          ? { ...rulesDraft }
+          : ({ ...loadGameRules(game, undefined, gameMode).value } as Record<string, unknown>);
+      const trainingRules: Record<string, unknown> = {
+        ...baseRules,
+        countdownSeconds: 0,
+        roundTimeLimitEnabled: false,
+      };
+      const seed = createRandomSeed();
+      const players: PlayerConfig[] = [
+        {
+          slotId: p1Profile.slotId,
+          rawName: p1Profile.name,
+          displayName: resolveDisplayName(p1Profile.slotId, p1Profile.name),
+          colorHex: p1Profile.colorHex,
+          bindings: {
+            ...(game.defaultBindingsBySlot.p1 ?? {}),
+            ...(gameBindings[p1Profile.slotId] ?? {}),
+          },
+          controller: 'human',
+        },
+        {
+          slotId: 'p2',
+          rawName: 'DUMMY',
+          displayName: '不死假人',
+          colorHex: '#64748B',
+          bindings: {},
+          controller: 'human',
+        },
+      ];
+
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+
+      const snapshot: MatchLaunchSnapshot<Record<string, unknown>> = {
+        gameId: game.id,
+        rulesVersion: game.rulesVersion,
+        rules: trainingRules,
+        players,
+        sessionSeed: seed,
+        gameMode: 'single',
+        trainingMode: true,
+        trainingInitialDrill: initialDrill,
+      };
+
+      setLastResult(null);
+      setBattlePaused(false);
+      setSettingsOverlayOpen(false);
+      setActiveSnapshot(snapshot);
+      setView('battle');
+    },
+    [bindingsBySlot, currentGame.id, gameMode, profiles, rulesDraft]
+  );
+
+  // 支持 ?autostart=1(&mode=single|brawl&seats=6&matchup=ai_vs_ai...) 直达实时对战，?training=1 直达火柴人练习关卡，或 ?demoResults=1 直达结算页
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
+    if (params.get('training') === '1' && view === 'lobby' && !activeSnapshot) {
+      const targetGame =
+        gameRegistry.get(params.get('game') ?? 'stickman-duel') ??
+        games.find((g) => g.supportsTraining) ??
+        currentGame;
+      if (targetGame.id !== currentGame.id) {
+        handleSelectGame(targetGame.id);
+      }
+      launchTraining(targetGame, params.get('drill') ?? undefined);
+      return;
+    }
     if (params.get('demoResults') === '1' && view === 'lobby' && !lastResult) {
       const demoHistory = createDemoMatchHistory();
       setMatchHistory(demoHistory);
@@ -755,6 +831,11 @@ export default function App() {
             if (g.id !== currentGame.id) handleSelectGame(g.id);
             launchMatch(g, undefined, true);
           }}
+          onStartTraining={(gameId) => {
+            const g = gameRegistry.get(gameId) ?? currentGame;
+            if (g.id !== currentGame.id) handleSelectGame(g.id);
+            launchTraining(g);
+          }}
         />
         {aiStudioOverlay}
       </>
@@ -798,6 +879,9 @@ export default function App() {
           onResetAllRules={handleResetAllRules}
           onResetGroupRules={handleResetGroupRules}
           onStartMatch={() => launchMatch(currentGame, rulesDraft, false)}
+          onStartTraining={
+            currentGame.supportsTraining ? () => launchTraining(currentGame) : undefined
+          }
         />
         {aiStudioOverlay}
       </>

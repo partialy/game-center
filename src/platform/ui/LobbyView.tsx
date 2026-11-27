@@ -10,6 +10,7 @@ import {
   Play,
   RotateCcw,
   SlidersHorizontal,
+  Target,
   Zap,
 } from 'lucide-react';
 import arcadeIconUrl from '../../assets/ai-game-certer-icon_round.ico?url';
@@ -56,6 +57,7 @@ interface LobbyViewProps {
   onEnterPreMatch: (gameId: string) => void;
   onEnterSettings: (gameId: string) => void;
   onQuickStart: (gameId: string) => void;
+  onStartTraining?: (gameId: string) => void;
 }
 
 const WHEEL_COOLDOWN_MS = 200;
@@ -82,6 +84,7 @@ export function LobbyView({
   onEnterPreMatch,
   onEnterSettings,
   onQuickStart,
+  onStartTraining,
 }: LobbyViewProps) {
   const catalog = useMemo(() => buildLobbyCatalog(games), [games]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -744,6 +747,18 @@ export function LobbyView({
                       ? '开始观战'
                       : '快速对局'}
                   </Button>
+                  {activePlayableGame?.supportsTraining && onStartTraining && (
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      data-testid="lobby-training-btn"
+                      onPress={() => onStartTraining(activeEntry.id)}
+                      className="min-h-[42px] px-4 font-semibold whitespace-nowrap shrink-0"
+                    >
+                      <Target className="w-3.5 h-3.5 text-[var(--accent)]" aria-hidden="true" />
+                      练习关卡
+                    </Button>
+                  )}
                   <Button
                     variant="secondary"
                     size="md"

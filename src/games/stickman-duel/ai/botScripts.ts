@@ -7,7 +7,114 @@ import {
 } from '../../../platform/games/contracts';
 import { DeterministicRng } from '../../tank-battle/map/rng';
 import { getTile } from '../map/terrain';
-import type { GroundPickup, StickFighter, StickmanWorld, StickWeaponKind } from '../types';
+import type {
+  GroundPickup,
+  StickFighter,
+  StickmanTerrain,
+  StickmanWorld,
+  StickWeaponKind,
+} from '../types';
+
+export interface WallClimbDecision {
+  wantsJump: boolean;
+  /** 正在翻越前方高墙，建议空中保持朝向墙体的水平推进直到越过墙顶 */
+  keepPushDir: boolean;
+  /** 检测到的前方墙顶世界坐标 Y（无墙为 null） */
+  wallTopY: number | null;
+}
+
+function isSolidTile(terrain: StickmanTerrain, col: number, row: number): boolean {
+  const t = getTile(terrain, col, row);
+  return t === 'brick' || t === 'bedrock';
+}
+
+/**
+ * 统一的障碍翻越与二段跳时机判定：
+ * 1. 地面遇墙/卡墙/高目标立即触发一段跳；
+ * 2. 空中持有二段跳时，绝不在刚离地的高速上升段提前挥霍二段跳，
+ *    而是等到接近或越过一段跳顶点（vy >= -115）且仍未越过墙顶/高目标时再触发二段跳，
+ *    从而发挥完整「一段跳 + 二段跳」组合高度翻越 4～6 格高墙。
+ */
+export function evaluateWallClimbJump(params: {
+  terrain: StickmanTerrain;
+  self: Pick<
+    StickFighter,
+    'x' | 'y' | 'vy' | 'halfWidth' | 'height' | 'onGround' | 'coyoteTimer' | 'jumpsUsed' | 'maxJumps'
+  >;
+  lookDir: -1 | 1;
+  movingHorizontally: boolean;
+  goalX: number;
+  goalY: number;
+  stuckTimer: number;
+  dodgeJump: boolean;
+}): WallClimbDecision {
+  const { terrain, self, lookDir, movingHorizontally, goalX, goalY, stuckTimer, dodgeJump } = params;
+  const ts = terrain.tileSize;
+  const nearCol = Math.floor((self.x + lookDir * (self.halfWidth + 8)) / ts);
+  const farCol = Math.floor((self.x + lookDir * (self.halfWidth + ts * 0.92)) / ts);
+
+  const footRow = Math.floor((self.y - 4) / ts);
+  const midRow = Math.floor((self.y - self.height * 0.55) / ts);
+  const headRow = Math.floor((self.y - self.height + 4) / ts);
+
+  // 检测身前近处与前方一格内的实体砖墙/基岩（覆盖脚部、躯干与头部三层高度）
+  const nearBlocked =
+    isSolidTile(terrain, nearCol, footRow) ||
+    isSolidTile(terrain, nearCol, midRow) ||
+    isSolidTile(terrain, nearCol, headRow);
+  const farBlocked =
+    isSolidTile(terrain, farCol, footRow) ||
+    isSolidTile(terrain, farCol, midRow);
+
+  // 若前方有墙，向上扫描找出该墙体的顶部行号，判断脚底是否已足够越过墙顶
+  let wallTopY: number | null = null;
+  const scanCol = nearBlocked ? nearCol : farBlocked ? farCol : null;
+  if (scanCol !== null) {
+    let highestSolidRow = footRow;
+    for (let r = footRow; r >= Math.max(0, footRow - 7); r -= 1) {
+      if (isSolidTile(terrain, scanCol, r)) {
+        highestSolidRow = r;
+      } else if (r < headRow) {
+        // 已经扫到头顶以上且出现空隙，说明到达当前墙顶
+        break;
+      }
+    }
+    wallTopY = highestSolidRow * ts;
+  }
+
+  const blockedAhead = (movingHorizontally || stuckTimer > 0.16) && (nearBlocked || farBlocked);
+  const highGoal = goalY < self.y - 44 && Math.abs(goalX - self.x) < 240;
+  const stillBelowWallTop =
+    (movingHorizontally || stuckTimer > 0.16) && wallTopY !== null && self.y > wallTopY + 4;
+  const canFirstJump = self.onGround || self.coyoteTimer > 0;
+  const canDoubleJump = !canFirstJump && self.jumpsUsed > 0 && self.jumpsUsed < self.maxJumps;
+
+  let wantsJump = false;
+
+  if (canFirstJump) {
+    if (dodgeJump || blockedAhead || stuckTimer > 0.2 || highGoal) {
+      wantsJump = true;
+    }
+  } else if (canDoubleJump) {
+    // 紧急躲弹允许稍早起二段跳；翻越高墙或追高目标必须等到接近一段跳最高点再起跳
+    const atApexForClimb = self.vy >= -115;
+    const atApexForDodge = self.vy >= -220;
+
+    if (dodgeJump && atApexForDodge) {
+      wantsJump = true;
+    } else if (atApexForClimb) {
+      const needClimbMore = blockedAhead || stillBelowWallTop || stuckTimer > 0.16;
+      const needReachGoal = goalY < self.y - 34 && Math.abs(goalX - self.x) < 240;
+      if (needClimbMore || needReachGoal) {
+        wantsJump = true;
+      }
+    }
+  }
+
+  const keepPushDir =
+    movingHorizontally && !self.onGround && (nearBlocked || stillBelowWallTop);
+  return { wantsJump, keepPushDir, wallTopY };
+}
 
 interface StickmanBotProfile {
   /** 反应间隔（秒），越低越灵敏 */
@@ -174,29 +281,33 @@ class StickmanTacticalBot implements BotAgentInstance<StickmanWorld> {
       }
     }
 
-    const finalMoveX = dodgeMoveX !== null ? dodgeMoveX : this.cachedMoveX;
-    if (finalMoveX < 0) intent.moveLeft = true;
-    if (finalMoveX > 0) intent.moveRight = true;
+    let finalMoveX = dodgeMoveX !== null ? dodgeMoveX : this.cachedMoveX;
 
-    // 5. 地形导航：遇砖墙起跳、高处目标二段跳、下方目标穿短平台
+    // 5. 地形导航：遇砖墙起跳、高墙近顶点精准二段跳、下方目标穿短平台
     const ts = world.terrain.tileSize;
     const selfCol = Math.floor(self.x / ts);
     const selfFootRow = Math.floor((self.y - 2) / ts);
-    const lookDir = finalMoveX !== 0 ? finalMoveX : self.facing;
-    const aheadTile = getTile(world.terrain, selfCol + lookDir, selfFootRow);
+    const lookDir: -1 | 1 = (finalMoveX !== 0 ? finalMoveX : self.facing) >= 0 ? 1 : -1;
     const aheadLower = getTile(world.terrain, selfCol + lookDir, selfFootRow - 1);
-    const blockedAhead = aheadTile === 'brick' || aheadTile === 'bedrock';
 
-    let wantsJump = dodgeJump;
-    if (blockedAhead || this.stuckTimer > 0.24) {
-      wantsJump = true;
+    const climb = evaluateWallClimbJump({
+      terrain: world.terrain,
+      self,
+      lookDir,
+      movingHorizontally: finalMoveX !== 0,
+      goalX,
+      goalY,
+      stuckTimer: this.stuckTimer,
+      dodgeJump,
+    });
+
+    if (climb.keepPushDir && dodgeMoveX === null) {
+      finalMoveX = lookDir;
     }
-    // 目标在更高平台
-    if (goalY < self.y - 44 && Math.abs(goalX - self.x) < 220) {
-      if (self.onGround || (self.jumpsUsed === 1 && self.vy > -40)) {
-        wantsJump = true;
-      }
-    }
+    if (finalMoveX < 0) intent.moveLeft = true;
+    if (finalMoveX > 0) intent.moveRight = true;
+
+    let wantsJump = climb.wantsJump;
     // 目标在下方且自己站在单向短平台上 -> 下+跳穿台
     if (
       goalY > self.y + 42 &&

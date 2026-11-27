@@ -14,6 +14,7 @@ import type {
 import { DeterministicRng } from '../../tank-battle/map/rng';
 import {
   buildStickmanTerrain,
+  buildStickmanTrainingTerrain,
   destroySingleNearestTile,
   destroyTerrainInRadius,
   findValidDropSurface,
@@ -32,7 +33,11 @@ import type {
   StickPickupKind,
   StickProjectile,
   StickmanDuelRules,
+  StickmanTrainingDrill,
+  StickmanTrainingState,
   StickmanWorld,
+  TrainingDispenseMode,
+  TrainingParryShotKind,
 } from '../types';
 import {
   PICKUP_ACCENTS,
@@ -47,6 +52,16 @@ import {
   swapFighterWeapon,
   type ProjectileHitZone,
 } from './combat';
+import {
+  TRAINING_PARRY_TELEGRAPH_SECONDS,
+  computeDummyDesiredVx,
+  createEmptyTrainingStats,
+  createInitialTrainingState,
+  getParryIntervalSeconds,
+  getTrainingDrillMeta,
+  isValidTrainingDrill,
+  pickNextParryShotKind,
+} from './training';
 
 const FIGHTER_HALF_WIDTH = 13;
 const FIGHTER_HEIGHT = 54;
@@ -110,6 +125,11 @@ function createFighter(
     hitStunTimer: 0,
     hitFlashTimer: 0,
     invulnTimer: 0,
+    impactShakeTimer: 0,
+    impactShakeMax: 0.16,
+    impactShakeIntensity: 0,
+    impactDirX: 0,
+    impactDirY: 0,
     lastHitVolleyId: null,
     recoilTimer: 0,
     swapCooldown: 0,
@@ -161,16 +181,29 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       stats[p.slotId] = createEmptyStats();
     }
 
-    const initialTerrain = this.buildRoundTerrain(1);
-    const mapCode = encodeStickmanMapCode(initialTerrain.template, this.baseMapSeed);
+    const isTraining = Boolean(snapshot.trainingMode);
+    const initialTerrain = isTraining
+      ? buildStickmanTrainingTerrain(this.baseMapSeed)
+      : this.buildRoundTerrain(1);
+    const mapCode = isTraining
+      ? 'DOJO-TRAIN'
+      : encodeStickmanMapCode(initialTerrain.template, this.baseMapSeed);
+    const initialDrill: StickmanTrainingDrill = isValidTrainingDrill(snapshot.trainingInitialDrill)
+      ? snapshot.trainingInitialDrill
+      : 'free';
+    const trainingState = isTraining
+      ? createInitialTrainingState(initialDrill, initialTerrain)
+      : null;
 
     this.world = {
-      phase: this.rules.countdownSeconds > 0 ? 'countdown' : 'playing',
+      phase: isTraining ? 'playing' : this.rules.countdownSeconds > 0 ? 'countdown' : 'playing',
       roundNumber: 1,
       targetScore: this.rules.targetScore,
-      countdownSeconds: this.rules.countdownSeconds,
+      countdownSeconds: isTraining ? 0 : this.rules.countdownSeconds,
       battleElapsedSeconds: 0,
-      roundTimeRemainingSeconds: this.rules.roundTimeLimitEnabled
+      roundTimeRemainingSeconds: isTraining
+        ? null
+        : this.rules.roundTimeLimitEnabled
         ? this.rules.roundTimeLimitSeconds
         : null,
       totalBattleSeconds: 0,
@@ -183,6 +216,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       particles: [],
       slashes: [],
       explosions: [],
+      impactWaves: [],
       floatingTexts: [],
       scores,
       stats,
@@ -193,11 +227,16 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       shakeDirX: 0,
       shakeDirY: 0,
       rules: this.rules,
+      training: trainingState,
     };
 
     this.dropSpawnTimer = this.rules.firstDropDelaySeconds;
-    // 开局按刷新位置策略（默认随机/可选中间）预先投放 1 件初始武器
-    this.spawnInitialWeapon();
+    if (trainingState) {
+      this.applyTrainingDrillLoadout(trainingState.drill);
+    } else {
+      // 开局按刷新位置策略（默认随机/可选中间）预先投放 1 件初始武器
+      this.spawnInitialWeapon();
+    }
   }
 
   private buildRoundTerrain(roundNumber: number) {
@@ -299,6 +338,259 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     return this.matchResult;
   }
 
+  isTrainingMode(): boolean {
+    return this.world.training !== null;
+  }
+
+  getTrainingState(): StickmanTrainingState | null {
+    const tr = this.world.training;
+    if (!tr) return null;
+    return {
+      ...tr,
+      stats: { ...tr.stats },
+    };
+  }
+
+  setTrainingDrill(drill: StickmanTrainingDrill): void {
+    const tr = this.world.training;
+    if (!tr) return;
+    const meta = getTrainingDrillMeta(drill);
+    tr.drill = drill;
+    tr.infiniteWeapon = meta.defaultInfiniteWeapon;
+    tr.showHitZones = meta.defaultShowHitZones;
+    tr.dummyMotion = meta.defaultDummyMotion;
+    tr.zeroHurtInvuln = false;
+    tr.parryFireTimer = 0.85;
+    tr.parryTelegraphTimer = 0;
+    tr.parryShotIndex = 0;
+    tr.parryNextKind = pickNextParryShotKind(tr.parryAmmo, 0);
+    tr.stats = createEmptyTrainingStats();
+    this.resetTrainingPositionsAndEntities();
+    this.applyTrainingDrillLoadout(drill);
+    tr.revision += 1;
+  }
+
+  updateTrainingConfig(
+    patch: Partial<
+      Pick<
+        StickmanTrainingState,
+        | 'dummyMotion'
+        | 'infiniteWeapon'
+        | 'showHitZones'
+        | 'zeroHurtInvuln'
+        | 'parryAmmo'
+        | 'parryCadence'
+      >
+    >
+  ): void {
+    const tr = this.world.training;
+    if (!tr) return;
+    if (patch.dummyMotion !== undefined) tr.dummyMotion = patch.dummyMotion;
+    if (patch.infiniteWeapon !== undefined) tr.infiniteWeapon = patch.infiniteWeapon;
+    if (patch.showHitZones !== undefined) tr.showHitZones = patch.showHitZones;
+    if (patch.zeroHurtInvuln !== undefined) tr.zeroHurtInvuln = patch.zeroHurtInvuln;
+    if (patch.parryAmmo !== undefined) {
+      tr.parryAmmo = patch.parryAmmo;
+      tr.parryShotIndex = 0;
+      tr.parryNextKind = pickNextParryShotKind(tr.parryAmmo, 0);
+      tr.parryTelegraphTimer = 0;
+      tr.parryFireTimer = Math.min(tr.parryFireTimer, 0.7);
+    }
+    if (patch.parryCadence !== undefined) {
+      tr.parryCadence = patch.parryCadence;
+      tr.parryFireTimer = Math.min(tr.parryFireTimer, getParryIntervalSeconds(tr.parryCadence));
+    }
+    tr.revision += 1;
+  }
+
+  dispenseTrainingItem(kind: StickPickupKind | 'unarmed', mode: TrainingDispenseMode): void {
+    const tr = this.world.training;
+    const player = this.world.fighters[0];
+    if (!tr || !player) return;
+
+    if (kind === 'unarmed') {
+      player.weapon = null;
+      player.attack = null;
+      this.world.floatingTexts.push({
+        x: player.x,
+        y: player.y - player.height - 12,
+        vy: -40,
+        text: '已切空手',
+        color: '#94A3B8',
+        scale: 0.92,
+        age: 0,
+        maxAge: 0.75,
+      });
+      tr.revision += 1;
+      return;
+    }
+
+    if (mode === 'equip') {
+      if (kind === 'medkit') {
+        const before = player.hp;
+        player.hp = player.maxHp;
+        player.displayHp = player.maxHp;
+        this.spawnSparkBurst(player.x, player.y - player.height * 0.5, 0, -1, 10, '#10B981');
+        this.world.floatingTexts.push({
+          x: player.x,
+          y: player.y - player.height - 14,
+          vy: -48,
+          text: before < player.maxHp ? `+${Math.ceil(player.maxHp - before)} HP` : '已满血',
+          color: '#10B981',
+          scale: 1.05,
+          age: 0,
+          maxAge: 0.8,
+        });
+      } else {
+        const max = getWeaponMaxCharges(kind, this.rules);
+        player.weapon = {
+          kind,
+          remaining: max,
+          max,
+        };
+        player.attack = null;
+        this.spawnSparkBurst(
+          player.x,
+          player.y - player.height * 0.55,
+          player.facing,
+          -0.3,
+          8,
+          PICKUP_ACCENTS[kind]
+        );
+        this.world.floatingTexts.push({
+          x: player.x,
+          y: player.y - player.height - 14,
+          vy: -46,
+          text: `装备 ${PICKUP_LABELS[kind]}`,
+          color: PICKUP_ACCENTS[kind],
+          scale: 0.98,
+          age: 0,
+          maxAge: 0.8,
+        });
+      }
+      tr.revision += 1;
+      return;
+    }
+
+    // 空投到场：在玩家略前方上方投放真实物理掉落物，便于练习拾取/替换武器
+    const max = kind === 'medkit' ? 1 : getWeaponMaxCharges(kind, this.rules);
+    const dropX = Math.max(
+      48,
+      Math.min(this.world.terrain.width - 48, player.x + player.facing * 56)
+    );
+    const dropY = Math.max(36, player.y - player.height - 28);
+    this.world.pickups.push({
+      id: this.nextEntityId++,
+      kind,
+      remaining: max,
+      max,
+      x: dropX,
+      y: dropY,
+      vx: 0,
+      vy: 0,
+      radius: 15,
+      onGround: false,
+      age: 0,
+      lifetime: 60,
+      pickupLockTimer: 0,
+      droppedBySlotId: null,
+    });
+    this.spawnSparkBurst(dropX, dropY, 0, -1, 7, PICKUP_ACCENTS[kind]);
+    tr.revision += 1;
+  }
+
+  clearTrainingPickups(): void {
+    const tr = this.world.training;
+    if (!tr) return;
+    this.world.pickups = [];
+    tr.revision += 1;
+  }
+
+  triggerTrainingVolley(): void {
+    const tr = this.world.training;
+    if (!tr) return;
+    tr.parryFireTimer = 0;
+    tr.parryTelegraphTimer = TRAINING_PARRY_TELEGRAPH_SECONDS;
+    tr.revision += 1;
+  }
+
+  resetTrainingArena(resetStats = true): void {
+    const tr = this.world.training;
+    if (!tr) return;
+    this.world.terrain = buildStickmanTrainingTerrain(this.baseMapSeed);
+    this.resetTrainingPositionsAndEntities();
+    this.applyTrainingDrillLoadout(tr.drill);
+    if (resetStats) {
+      tr.stats = createEmptyTrainingStats();
+    }
+    tr.parryFireTimer = 0.85;
+    tr.parryTelegraphTimer = 0;
+    tr.parryShotIndex = 0;
+    tr.parryNextKind = pickNextParryShotKind(tr.parryAmmo, 0);
+    tr.dummyIdleHealTimer = 0;
+    tr.revision += 1;
+  }
+
+  private resetTrainingPositionsAndEntities(): void {
+    const tr = this.world.training;
+    if (!tr) return;
+    const terrain = this.world.terrain;
+    const sp0 = terrain.spawnPoints[0] ?? {
+      x: terrain.width * 0.26,
+      y: (terrain.rows - 1) * terrain.tileSize,
+    };
+    const sp1 = terrain.spawnPoints[1] ?? {
+      x: terrain.width * 0.7,
+      y: (terrain.rows - 1) * terrain.tileSize,
+    };
+    tr.dummyHomeX = sp1.x;
+    tr.dummyHomeY = sp1.y;
+
+    this.world.pickups = [];
+    this.world.projectiles = [];
+    this.world.projectileTrails = [];
+    this.world.particles = [];
+    this.world.slashes = [];
+    this.world.explosions = [];
+    this.world.impactWaves = [];
+    this.world.floatingTexts = [];
+    this.world.hitstopTimer = 0;
+    this.world.shakeIntensity = 0;
+
+    const p1 = this.world.fighters[0];
+    const dummy = this.world.fighters[1];
+    if (p1) {
+      const prevWeapon = p1.weapon;
+      Object.assign(p1, createFighter(p1.config, sp0.x, sp0.y, 1, this.rules.maxHp));
+      p1.weapon = prevWeapon;
+    }
+    if (dummy) {
+      Object.assign(dummy, createFighter(dummy.config, sp1.x, sp1.y, -1, this.rules.maxHp));
+    }
+  }
+
+  private applyTrainingDrillLoadout(drill: StickmanTrainingDrill): void {
+    const player = this.world.fighters[0];
+    const dummy = this.world.fighters[1];
+    if (!player) return;
+    const meta = getTrainingDrillMeta(drill);
+    if (meta.defaultWeapon) {
+      const max = getWeaponMaxCharges(meta.defaultWeapon, this.rules);
+      player.weapon = { kind: meta.defaultWeapon, remaining: max, max };
+    } else if (drill === 'combo') {
+      player.weapon = null;
+    }
+    if (dummy) {
+      if (drill === 'parry') {
+        const nextKind = this.world.training?.parryNextKind ?? 'pistol';
+        const max = getWeaponMaxCharges(nextKind, this.rules);
+        dummy.weapon = { kind: nextKind, remaining: max, max };
+      } else {
+        dummy.weapon = null;
+      }
+    }
+  }
+
   getHudState(): HudState {
     const players: PlayerHudEntry[] = this.world.fighters.map((f) => {
       const statusItems = [];
@@ -306,7 +598,10 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         statusItems.push({
           id: `weapon-${f.weapon.kind}`,
           label: PICKUP_LABELS[f.weapon.kind],
-          valueText: `${f.weapon.remaining}/${f.weapon.max}`,
+          valueText:
+            this.world.training?.infiniteWeapon && f.slotId === this.world.fighters[0]?.slotId
+              ? '∞'
+              : `${f.weapon.remaining}/${f.weapon.max}`,
           remainingCharges: f.weapon.remaining,
           maxCharges: f.weapon.max,
           iconKey: f.weapon.kind,
@@ -343,6 +638,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       mapCode: this.world.mapCode,
       players,
       roundBanner: this.world.roundBanner,
+      customSignature: this.world.training ? `tr:${this.world.training.revision}` : undefined,
     };
   }
 
@@ -350,9 +646,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     const sounds: SoundEventKind[] = [];
     const dt = Math.min(0.05, Math.max(0, dtSeconds));
 
-    // 相机震屏衰减（即使在顿帧中也可微幅释放视觉张力）
+    // 克制的全局微震平滑衰减（仅用于火箭爆炸/KO/爆头等极重时刻）
     if (this.world.shakeIntensity > 0) {
-      this.world.shakeIntensity = Math.max(0, this.world.shakeIntensity - dt * 36);
+      this.world.shakeIntensity = Math.max(0, this.world.shakeIntensity - dt * 24);
     }
 
     if (this.world.phase === 'match_over') {
@@ -423,16 +719,26 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       }
     }
 
-    // 空投武器与血包刷新
+    // 空投武器与血包刷新（练习关卡关闭随机定时掉落，由玩家按需发放）
     this.stepDropSpawner(dt);
 
     // 角色输入、移动、跳跃、动作与拾取/换武器
-    for (const fighter of this.world.fighters) {
+    for (let idx = 0; idx < this.world.fighters.length; idx += 1) {
+      const fighter = this.world.fighters[idx];
       if (!fighter.alive) {
         this.stepPassiveFighterPhysics(fighter, dt);
         continue;
       }
+      if (this.world.training && idx === 1) {
+        this.stepTrainingDummy(fighter, dt, sounds);
+        continue;
+      }
       this.stepActiveFighter(fighter, dt, input, sounds);
+    }
+
+    // 练习关卡计时、假人自动回血与发球机调度
+    if (this.world.training) {
+      this.stepTrainingTick(dt, sounds);
     }
 
     // 弹体推进与碰撞（手枪直线 / 火箭受重力抛物线）
@@ -457,6 +763,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
   }
 
   private stepDropSpawner(dt: number): void {
+    if (this.world.training) return;
     const pool = this.getEnabledPickupPool();
     if (pool.length === 0 || this.rules.maxDropsOnField <= 0) return;
 
@@ -473,6 +780,186 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     this.dropSpawnTimer = minI + this.rng.next() * (maxI - minI);
   }
 
+  private stepTrainingDummy(dummy: StickFighter, dt: number, sounds: SoundEventKind[]): void {
+    const tr = this.world.training;
+    const player = this.world.fighters[0];
+    if (!tr || !player) return;
+
+    dummy.hitFlashTimer = Math.max(0, dummy.hitFlashTimer - dt);
+    dummy.invulnTimer = Math.max(0, dummy.invulnTimer - dt);
+    if (dummy.invulnTimer <= 0) {
+      dummy.lastHitVolleyId = null;
+    }
+    dummy.recoilTimer = Math.max(0, dummy.recoilTimer - dt);
+    dummy.attackCooldown = Math.max(0, dummy.attackCooldown - dt);
+    dummy.dropThroughTimer = Math.max(0, dummy.dropThroughTimer - dt);
+
+    const inHitStun = dummy.hitStunTimer > 0;
+    if (inHitStun) {
+      dummy.hitStunTimer = Math.max(0, dummy.hitStunTimer - dt);
+    }
+
+    // 始终面朝玩家
+    const dxToPlayer = player.x - dummy.x;
+    if (!inHitStun && Math.abs(dxToPlayer) > 8) {
+      dummy.facing = dxToPlayer >= 0 ? 1 : -1;
+    }
+
+    if (tr.drill === 'parry') {
+      // 砍子弹专练：假人稳立在右侧靶位担任发球机，精准瞄准玩家方向
+      const dyToPlayer = (player.y - player.height * 0.56) - (dummy.y - dummy.height * 0.62);
+      const dist = Math.hypot(dxToPlayer, dyToPlayer) || 1;
+      dummy.aimX = dxToPlayer / dist;
+      dummy.aimY = dyToPlayer / dist;
+
+      if (!inHitStun) {
+        const returnVx = computeDummyDesiredVx(
+          dummy.x,
+          tr.dummyHomeX,
+          this.world.battleElapsedSeconds,
+          'stand',
+          this.rules.moveSpeed
+        );
+        const accel = dummy.onGround ? 1900 : 1000;
+        const diff = returnVx - dummy.vx;
+        dummy.vx += Math.abs(diff) <= accel * dt ? diff : Math.sign(diff) * accel * dt;
+      } else {
+        dummy.vx *= Math.pow(0.18, dt);
+      }
+
+      const maxCharges = getWeaponMaxCharges(tr.parryNextKind, this.rules);
+      if (!dummy.weapon || dummy.weapon.kind !== tr.parryNextKind) {
+        dummy.weapon = { kind: tr.parryNextKind, remaining: maxCharges, max: maxCharges };
+      } else {
+        dummy.weapon.remaining = maxCharges;
+      }
+    } else {
+      dummy.aimX = dummy.facing;
+      dummy.aimY = 0;
+      if (!inHitStun) {
+        const desiredVx = computeDummyDesiredVx(
+          dummy.x,
+          tr.dummyHomeX,
+          this.world.battleElapsedSeconds,
+          tr.dummyMotion,
+          this.rules.moveSpeed
+        );
+        const accel = dummy.onGround ? 1850 : 980;
+        const diff = desiredVx - dummy.vx;
+        dummy.vx += Math.abs(diff) <= accel * dt ? diff : Math.sign(diff) * accel * dt;
+        if (dummy.onGround && Math.abs(dummy.vx) > 20) {
+          dummy.runPhase += Math.abs(dummy.vx) * dt * 0.052;
+        }
+        if (tr.dummyMotion === 'jump') {
+          tr.dummyJumpCooldown = Math.max(0, tr.dummyJumpCooldown - dt);
+          if (dummy.onGround && tr.dummyJumpCooldown <= 0) {
+            dummy.vy = -this.rules.jumpVelocity * 0.94;
+            dummy.onGround = false;
+            dummy.onPlatform = false;
+            tr.dummyJumpCooldown = 1.32;
+            this.spawnDustBurst(dummy.x, dummy.y, 4, '#94A3B8');
+            sounds.push('stick_jump');
+          }
+        }
+      } else {
+        dummy.vx *= Math.pow(0.2, dt);
+      }
+    }
+
+    dummy.vy += this.rules.gravity * dt;
+    moveBodyWithTerrain(this.world.terrain, dummy, dt, false, 0);
+
+    // 防止假人被连招打进右侧砖墙或角落卡住太久：脱离过远且硬直结束时柔顺复位
+    if (!inHitStun && (dummy.x < 64 || dummy.x > this.world.terrain.width - 118)) {
+      dummy.x = tr.dummyHomeX;
+      dummy.y = tr.dummyHomeY;
+      dummy.vx = 0;
+      dummy.vy = 0;
+      this.spawnSparkBurst(dummy.x, dummy.y - dummy.height * 0.5, 0, -1, 6, '#94A3B8');
+    }
+
+    this.updateScarf(dummy, dt);
+    this.smoothDisplayHp(dummy, dt);
+  }
+
+  private stepTrainingTick(dt: number, sounds: SoundEventKind[]): void {
+    const tr = this.world.training;
+    const player = this.world.fighters[0];
+    const dummy = this.world.fighters[1];
+    if (!tr || !player || !dummy) return;
+
+    // 1. 连招计时衰减：超过 1.7s 未追击则本段连击归零（保留最高纪录）
+    if (tr.stats.comboResetTimer > 0) {
+      tr.stats.comboResetTimer = Math.max(0, tr.stats.comboResetTimer - dt);
+      if (tr.stats.comboResetTimer === 0 && tr.stats.comboHits > 0) {
+        tr.stats.comboHits = 0;
+        tr.stats.comboDamage = 0;
+        tr.revision += 1;
+      }
+    }
+
+    // 2. 不死假人脱战 1.7s 自动回满血
+    if (tr.dummyIdleHealTimer > 0) {
+      tr.dummyIdleHealTimer = Math.max(0, tr.dummyIdleHealTimer - dt);
+      if (tr.dummyIdleHealTimer === 0 && dummy.hp < dummy.maxHp) {
+        dummy.hp = dummy.maxHp;
+        dummy.displayHp = dummy.maxHp;
+        this.spawnSparkBurst(dummy.x, dummy.y - dummy.height * 0.5, 0, -1, 6, '#10B981');
+      }
+    }
+
+    // 3. 砍子弹专练发球机倒计时与预警发射（或在任意练习点击「立即发射」触发）
+    const shouldTickParry = tr.drill === 'parry' || tr.parryTelegraphTimer > 0;
+    if (!shouldTickParry) return;
+
+    if (tr.parryTelegraphTimer > 0) {
+      tr.parryTelegraphTimer = Math.max(0, tr.parryTelegraphTimer - dt);
+      if (tr.parryTelegraphTimer === 0) {
+        this.fireTrainingDummyShot(dummy, player, tr.parryNextKind, sounds);
+        tr.parryShotIndex += 1;
+        tr.parryNextKind = pickNextParryShotKind(tr.parryAmmo, tr.parryShotIndex);
+        tr.parryFireTimer = getParryIntervalSeconds(tr.parryCadence);
+        tr.revision += 1;
+      }
+    } else if (tr.drill === 'parry') {
+      tr.parryFireTimer = Math.max(0, tr.parryFireTimer - dt);
+      if (tr.parryFireTimer === 0) {
+        tr.parryTelegraphTimer = TRAINING_PARRY_TELEGRAPH_SECONDS;
+        tr.revision += 1;
+      }
+    }
+  }
+
+  private fireTrainingDummyShot(
+    dummy: StickFighter,
+    player: StickFighter,
+    kind: TrainingParryShotKind,
+    sounds: SoundEventKind[]
+  ): void {
+    const originX = dummy.x;
+    const originY = dummy.y - dummy.height * 0.62;
+    const targetX = player.x;
+    const targetY = player.y - player.height * 0.56;
+    const dx = targetX - originX;
+    let dy = targetY - originY;
+    if (kind === 'grenade') {
+      // 给抛物线手雷一点自然抬角，使其在玩家身前爆裂出可斩断的 6 向碎片
+      dy -= Math.min(180, Math.abs(dx) * 0.24);
+    } else if (kind === 'rocket') {
+      dy -= Math.min(90, Math.abs(dx) * 0.08);
+    }
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = dx / len;
+    const ny = dy / len;
+    dummy.facing = nx >= 0 ? 1 : -1;
+    dummy.aimX = nx;
+    dummy.aimY = ny;
+    this.fireRangedWeapon(dummy, kind, nx, ny, sounds);
+    // 假人无限发球弹药
+    const maxCharges = getWeaponMaxCharges(kind, this.rules);
+    dummy.weapon = { kind, remaining: maxCharges, max: maxCharges };
+  }
+
   private stepPassiveFighterPhysics(f: StickFighter, dt: number): void {
     f.vy += this.rules.gravity * dt;
     f.vx *= Math.pow(0.08, dt);
@@ -481,6 +968,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       f.koTimer += dt;
       f.koSpin += f.vx * dt * 0.028;
     }
+    f.impactShakeTimer = Math.max(0, f.impactShakeTimer - dt);
     this.updateScarf(f, dt);
     this.smoothDisplayHp(f, dt);
   }
@@ -501,6 +989,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
   ): void {
     // 计时器更新
     f.hitFlashTimer = Math.max(0, f.hitFlashTimer - dt);
+    f.impactShakeTimer = Math.max(0, f.impactShakeTimer - dt);
     f.invulnTimer = Math.max(0, f.invulnTimer - dt);
     if (f.invulnTimer <= 0) {
       f.lastHitVolleyId = null;
@@ -886,12 +1375,33 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
             maxAge: 0.62,
           });
           this.world.hitstopTimer = Math.max(this.world.hitstopTimer, 0.032);
-          this.addShake(3.2, f.facing, -0.2);
+          // 斩弹「叮！」打击感聚焦在剑身与斩击点周围，不震动整屏
+          this.applyFighterImpact(f, 3.6, -f.facing, -0.25, 0.12);
+          this.addLocalImpactWave(
+            proj.x,
+            proj.y,
+            f.facing,
+            -0.2,
+            116,
+            3.8,
+            '#38BDF8',
+            0.24,
+            'parry'
+          );
 
           const slashStats = this.world.stats[f.slotId];
           if (slashStats) {
             slashStats.itemsUsed += 1;
             slashStats.itemUsageByKind.sword = (slashStats.itemUsageByKind.sword ?? 0) + 1;
+          }
+          if (this.world.training && f.slotId === this.world.fighters[0]?.slotId) {
+            this.world.training.stats.parries += 1;
+            this.world.training.stats.parryStreak += 1;
+            this.world.training.stats.bestParryStreak = Math.max(
+              this.world.training.stats.bestParryStreak,
+              this.world.training.stats.parryStreak
+            );
+            this.world.training.revision += 1;
           }
           this.consumeSwordDurability(f, f.facing);
         }
@@ -920,6 +1430,12 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
 
   private consumeSwordDurability(attacker: StickFighter, dir: -1 | 1): void {
     if (!attacker.weapon || attacker.weapon.kind !== 'sword') return;
+    if (
+      this.world.training?.infiniteWeapon &&
+      attacker.slotId === this.world.fighters[0]?.slotId
+    ) {
+      return;
+    }
     attacker.weapon.remaining -= 1;
     if (attacker.weapon.remaining <= 0) {
       this.spawnSparkBurst(
@@ -1005,7 +1521,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         vRot: 14,
       });
       this.spawnSparkBurst(muzzleX, muzzleY, nx, ny, 6, '#FDE047');
-      this.addShake(3.2, -nx, -ny);
+      // 射击后坐力聚焦在开枪者与枪口附近场景，不再高频晃动全屏
+      this.applyFighterImpact(f, 2.4, -nx, -ny, 0.1);
+      this.addLocalImpactWave(muzzleX, muzzleY, nx, ny, 64, 1.9, '#FDE047', 0.16, 'muzzle');
       sounds.push('stick_pistol');
     } else if (kind === 'shotgun') {
       const pellets = Math.max(1, Math.round(this.rules.shotgunPellets));
@@ -1066,7 +1584,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
         vRot: 16,
       });
       this.spawnSparkBurst(muzzleX, muzzleY, nx, ny, 12, '#FB923C');
-      this.addShake(5.5, -nx, -ny);
+      this.applyFighterImpact(f, 4.4, -nx, -ny, 0.15);
+      this.addLocalImpactWave(muzzleX, muzzleY, nx, ny, 96, 3.4, '#FB923C', 0.2, 'muzzle');
       sounds.push('fire_shotgun');
     } else if (kind === 'grenade') {
       // 碎片手雷：8 方向抛物线投出，触碰任何物体立即引发一格小爆破 + 6 向 0.3× 碎片
@@ -1121,12 +1640,16 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       f.vx -= nx * 210;
       f.vy -= ny * 110;
       this.spawnSparkBurst(muzzleX - nx * 20, muzzleY - ny * 20, -nx, -ny, 9, '#FB923C');
-      this.addShake(5.5, -nx, -ny);
+      this.applyFighterImpact(f, 4.6, -nx, -ny, 0.16);
+      this.addLocalImpactWave(muzzleX, muzzleY, -nx, -ny, 108, 3.8, '#F97316', 0.22, 'muzzle');
       sounds.push('stick_rocket');
     }
 
-    // 消耗弹药；打空自动卸下武器
-    if (f.weapon && f.weapon.kind === kind) {
+    // 消耗弹药；打空自动卸下武器（练习模式开启无限弹药时不扣除）
+    const isInfinitePlayer =
+      Boolean(this.world.training?.infiniteWeapon) &&
+      f.slotId === this.world.fighters[0]?.slotId;
+    if (!isInfinitePlayer && f.weapon && f.weapon.kind === kind) {
       f.weapon.remaining -= 1;
       if (f.weapon.remaining <= 0) {
         f.weapon = null;
@@ -1186,6 +1709,8 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       this.consumeSwordDurability(attacker, dir);
     }
 
+    // 近战命中瞬间也给攻击者一记轻微反作用触感
+    this.applyFighterImpact(attacker, kind === 'punch' ? 1.8 : 2.8, -dir, -0.1, 0.09);
     this.dealDamage(attacker.slotId, target, damage, kbX, kbY, stun, hitstop, shake, sounds);
   }
 
@@ -1218,7 +1743,13 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     target.onPlatform = false;
     target.hitStunTimer = Math.max(target.hitStunTimer, stunSeconds);
     target.hitFlashTimer = 0.12;
-    const invulnDuration = Math.max(0, this.rules.hurtInvulnSeconds ?? 0.1);
+    const tr = this.world.training;
+    const isDummyTarget = Boolean(tr) && target.slotId === this.world.fighters[1]?.slotId;
+    const isPlayerTarget = Boolean(tr) && target.slotId === this.world.fighters[0]?.slotId;
+    const invulnDuration =
+      isDummyTarget && tr?.zeroHurtInvuln
+        ? 0
+        : Math.max(0, this.rules.hurtInvulnSeconds ?? 0.1);
     if (invulnDuration > 0) {
       target.invulnTimer = Math.max(target.invulnTimer, invulnDuration);
       target.lastHitVolleyId = volleyId ?? null;
@@ -1271,9 +1802,86 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     });
 
     this.world.hitstopTimer = Math.max(this.world.hitstopTimer, hitstopSeconds);
-    this.addShake(shakePower, kbX / dirLen, kbY / dirLen);
+
+    // 打击感优先作用于受击者本体抖动挤压 + 命中点周围砖块/平台局部震波，保持全局视角稳定舒适
+    const hitNx = kbX / dirLen;
+    const hitNy = kbY / dirLen;
+    const fighterShake = Math.min(9.5, Math.max(3.8, shakePower * 1.05));
+    this.applyFighterImpact(
+      target,
+      fighterShake,
+      hitNx,
+      hitNy,
+      isHeadshot || damage >= 25 ? 0.22 : 0.16
+    );
+    this.addLocalImpactWave(
+      impactX,
+      impactY,
+      hitNx,
+      hitNy,
+      isHeadshot ? 136 : damage >= 25 ? 128 : 96,
+      Math.min(6.4, Math.max(2.6, shakePower * 0.68)),
+      isHeadshot ? '#EF4444' : damage >= 25 ? '#F97316' : '#FDE047',
+      isHeadshot ? 0.3 : 0.24,
+      'hit'
+    );
+    // 全屏微震仅保留给爆头暴击（轻柔单向微推），普通拳脚/刀剑/枪弹不再晃动全屏
+    if (isHeadshot) {
+      this.addShake(1.8, hitNx, hitNy);
+    }
     if (damage >= 14) {
       sounds.push('stick_hit_heavy');
+    }
+
+    // 练习关卡统计与不死保护
+    if (tr) {
+      if (isDummyTarget && attackerSlotId === this.world.fighters[0]?.slotId) {
+        tr.stats.totalHits += 1;
+        tr.stats.comboHits += 1;
+        tr.stats.comboDamage += damage;
+        tr.stats.bestComboHits = Math.max(tr.stats.bestComboHits, tr.stats.comboHits);
+        tr.stats.bestComboDamage = Math.max(tr.stats.bestComboDamage, tr.stats.comboDamage);
+        tr.stats.comboResetTimer = 1.75;
+        tr.dummyIdleHealTimer = 1.75;
+
+        if (hitZone === 'head') {
+          tr.stats.headshots += 1;
+          tr.stats.headshotStreak += 1;
+          tr.stats.bestHeadshotStreak = Math.max(
+            tr.stats.bestHeadshotStreak,
+            tr.stats.headshotStreak
+          );
+        } else if (hitZone === 'body') {
+          tr.stats.bodyHits += 1;
+          tr.stats.headshotStreak = 0;
+        } else if (hitZone === 'legs') {
+          tr.stats.legHits += 1;
+          tr.stats.headshotStreak = 0;
+        }
+        tr.revision += 1;
+      } else if (isPlayerTarget) {
+        tr.stats.playerHitsTaken += 1;
+        tr.stats.parryStreak = 0;
+        tr.revision += 1;
+      }
+
+      if (target.hp <= 0) {
+        // 练习模式不淘汰、不结束回合，满血恢复继续演练
+        target.hp = target.maxHp;
+        target.displayHp = target.maxHp;
+        this.spawnSparkBurst(target.x, target.y - target.height * 0.5, 0, -1, 10, '#10B981');
+        this.world.floatingTexts.push({
+          x: target.x,
+          y: target.y - target.height - 26,
+          vy: -44,
+          text: isDummyTarget ? '不死回满' : '满血保护',
+          color: '#10B981',
+          scale: 0.92,
+          age: 0,
+          maxAge: 0.85,
+        });
+      }
+      return true;
     }
 
     if (target.hp <= 0) {
@@ -1332,7 +1940,21 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     }
 
     this.world.hitstopTimer = Math.max(this.world.hitstopTimer, 0.12);
-    this.addShake(11, victim.vx > 0 ? 1 : -1, -0.5);
+    const koDirX = victim.vx >= 0 ? 1 : -1;
+    this.applyFighterImpact(victim, 9.5, koDirX, -0.45, 0.26);
+    this.addLocalImpactWave(
+      victim.x,
+      victim.y - victim.height * 0.5,
+      koDirX,
+      -0.45,
+      175,
+      7.4,
+      victim.config.colorHex,
+      0.36,
+      'blast'
+    );
+    // KO 保留克制的轻柔单向画面微震
+    this.addShake(3.6, koDirX, -0.35);
     this.spawnSparkBurst(victim.x, victim.y - victim.height * 0.5, 0, -1, 22, victim.config.colorHex);
     this.world.floatingTexts.push({
       x: victim.x,
@@ -1611,7 +2233,9 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       color: '#84CC16',
     });
     this.spawnSparkBurst(cx, cy, 0, -1, 14, '#BEF264');
-    this.addShake(7.5, 0, -1);
+    // 手雷爆破以爆心周围局部场景震波为主，全屏仅极轻微推
+    this.addLocalImpactWave(cx, cy, 0, -1, 148, 6.2, '#84CC16', 0.3, 'blast');
+    this.addShake(1.8, 0, -0.6);
     sounds.push('fire_frag');
     sounds.push('explosion');
   }
@@ -1712,7 +2336,19 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       color: '#F97316',
     });
     this.spawnSparkBurst(cx, cy, 0, -1, 24, '#FB923C');
-    this.addShake(14, 0, -1);
+    // 火箭爆破驱动大范围周围砖块/平台剧烈微震，全屏克制在舒适范围内
+    this.addLocalImpactWave(
+      cx,
+      cy,
+      0,
+      -1,
+      Math.max(195, blastRadius * 2.15),
+      8.8,
+      '#F97316',
+      0.38,
+      'blast'
+    );
+    this.addShake(4.2, 0, -0.7);
     sounds.push('explosion');
   }
 
@@ -1954,9 +2590,57 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     }
   }
 
+  private applyFighterImpact(
+    f: StickFighter,
+    intensity: number,
+    dirX: number,
+    dirY: number,
+    durationSeconds: number
+  ): void {
+    const len = Math.hypot(dirX, dirY) || 1;
+    if (intensity >= f.impactShakeIntensity * 0.85 || f.impactShakeTimer <= 0.02) {
+      f.impactShakeIntensity = Math.min(10, intensity);
+      f.impactDirX = dirX / len;
+      f.impactDirY = dirY / len;
+    }
+    f.impactShakeMax = Math.max(0.06, durationSeconds);
+    f.impactShakeTimer = Math.max(f.impactShakeTimer, durationSeconds);
+  }
+
+  private addLocalImpactWave(
+    x: number,
+    y: number,
+    dirX: number,
+    dirY: number,
+    radius: number,
+    strength: number,
+    color: string,
+    maxAge: number,
+    kind: 'hit' | 'parry' | 'muzzle' | 'blast'
+  ): void {
+    const len = Math.hypot(dirX, dirY) || 1;
+    if (this.world.impactWaves.length >= 10) {
+      this.world.impactWaves.shift();
+    }
+    this.world.impactWaves.push({
+      x,
+      y,
+      dirX: dirX / len,
+      dirY: dirY / len,
+      radius,
+      strength,
+      color,
+      age: 0,
+      maxAge,
+      kind,
+    });
+  }
+
   private addShake(power: number, dirX: number, dirY: number): void {
-    if (power >= this.world.shakeIntensity) {
-      this.world.shakeIntensity = Math.min(18, power);
+    // 严格限制全屏晃动上限（<= 5.2px），避免长时间游玩眩晕
+    const clamped = Math.min(5.2, Math.max(0, power));
+    if (clamped >= this.world.shakeIntensity) {
+      this.world.shakeIntensity = clamped;
       this.world.shakeDirX = dirX;
       this.world.shakeDirY = dirY;
     }
@@ -1992,6 +2676,14 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
       }
     }
 
+    for (let i = this.world.impactWaves.length - 1; i >= 0; i -= 1) {
+      const w = this.world.impactWaves[i];
+      w.age += dt;
+      if (w.age >= w.maxAge) {
+        this.world.impactWaves.splice(i, 1);
+      }
+    }
+
     for (let i = this.world.projectileTrails.length - 1; i >= 0; i -= 1) {
       const tr = this.world.projectileTrails[i];
       tr.age += dt;
@@ -2015,6 +2707,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     roundResult?: SessionStepResult['roundResult'];
     matchResult?: MatchResultEvent;
   } {
+    if (this.world.training) return {};
     const alive = this.world.fighters.filter((f) => f.alive);
     if (alive.length > 1) return {};
 
@@ -2118,6 +2811,7 @@ export class StickmanDuelSession implements GameSession<StickmanWorld> {
     this.world.projectileTrails = [];
     this.world.slashes = [];
     this.world.explosions = [];
+    this.world.impactWaves = [];
     this.world.particles = [];
     this.world.floatingTexts = [];
     this.world.roundBanner = null;
